@@ -1,0 +1,17 @@
+{
+    "name": "Nexa.Character",
+    "rootNamespace": "Nexa.Character",
+    "references": [
+        "Nexa.Core",
+        "Nexa.Data"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
