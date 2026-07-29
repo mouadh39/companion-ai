@@ -83,3 +83,6 @@ infrastructure/**/.terraform/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
+
+# Claude Code — share project settings, keep machine-local grants private
+.claude/settings.local.json
