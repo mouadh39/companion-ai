@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/models" },
+    { "path": "../../packages/events" },
+    { "path": "../../packages/actions" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/providers" }
+  ]
+}
