@@ -1,8 +1,10 @@
-import { type Result, err, newActionId, ok } from '@nexa/shared';
 import type { CognitiveContext, Decision } from '@nexa/models';
 import { isDegraded } from '@nexa/models';
-import type { Action, SpeakAction } from '@nexa/actions';
-import type { LanguageModelPort, ModelMessage } from './ports.js';
+import type { PortOptions } from './execution/index.js';
+import type { GenerationOutcome, ToolLoopLimits } from './generation/index.js';
+import { defaultToolLoopLimits, deliver, runToolLoop } from './generation/index.js';
+import type { TurnSink } from './generation/index.js';
+import type { LanguageModelPort, ModelMessage, ToolExecutionPort } from './ports.js';
 
 /**
  * Turns a decision into concrete actions.
@@ -46,7 +48,11 @@ export const buildSystemPrompt = (context: CognitiveContext): string => {
   );
 
   if (context.goals.length > 0) {
-    parts.push(`Active goals you are helping with:\n${context.goals.map((g) => `- ${g}`).join('\n')}`);
+    parts.push(
+      `Active goals you are helping with:\n${context.goals
+        .map((goal) => `- ${goal.description}`)
+        .join('\n')}`,
+    );
   }
 
   if (context.retrievedMemories.length > 0) {
@@ -63,7 +69,9 @@ export const buildSystemPrompt = (context: CognitiveContext): string => {
   }
 
   if (context.availableTools.length > 0) {
-    parts.push(`Tools available to you: ${context.availableTools.join(', ')}.`);
+    parts.push(
+      `Tools available to you: ${context.availableTools.map((tool) => tool.name).join(', ')}.`,
+    );
   }
 
   // Told, not hidden. A companion that knows its context is incomplete can say
@@ -91,30 +99,16 @@ export const buildSystemPrompt = (context: CognitiveContext): string => {
 
 /** Maps working memory to provider messages, oldest first. */
 export const buildMessages = (context: CognitiveContext): readonly ModelMessage[] => {
-  const history: ModelMessage[] = context.workingMemory.map((turn) => ({
-    role: turn.role === 'user' ? ('user' as const) : ('assistant' as const),
-    content: turn.content,
-  }));
+  const history: ModelMessage[] = context.workingMemory.map((turn) =>
+    turn.role === 'user'
+      ? { role: 'user', content: turn.content }
+      : // Replayed history carries no tool calls: working memory is the compact
+        // projection of what was *said*, not a transcript of how it was reached.
+        { role: 'assistant', content: turn.content, toolCalls: [] },
+  );
 
   history.push({ role: 'user', content: context.perception.text });
   return history;
-};
-
-/** Chooses a delivery tone from the decision and the user's estimated state. */
-const toneFor = (context: CognitiveContext, decision: Decision): SpeakAction['tone'] => {
-  const emotion = context.perception.emotion;
-
-  // A low-confidence emotional read is not acted on. Treating a weak signal as
-  // fact is how an assistant tells a cheerful person they seem upset.
-  if (emotion !== null && emotion.confidence >= 0.6) {
-    if (emotion.emotion === 'frustrated' || emotion.emotion === 'stressed') return 'concerned';
-    if (emotion.emotion === 'sad') return 'concerned';
-    if (emotion.emotion === 'proud' || emotion.emotion === 'happy') return 'encouraging';
-    if (emotion.emotion === 'excited') return 'playful';
-  }
-
-  if (decision.kind === 'ask_clarifying_question') return 'neutral';
-  return context.personality.traits.warmth >= 0.7 ? 'warm' : 'neutral';
 };
 
 /** Instruction appended for decisions whose realisation needs steering. */
@@ -134,71 +128,82 @@ const decisionInstruction = (decision: Decision): string | null => {
   }
 };
 
+export interface ActionGeneratorDependencies {
+  readonly model: LanguageModelPort;
+  /** Absent means tools are never offered, whatever the registry lists. */
+  readonly toolExecution?: ToolExecutionPort;
+  readonly limits?: ToolLoopLimits;
+}
+
 export class ActionGenerator {
   readonly #model: LanguageModelPort;
-  readonly #maxTokens: number;
+  readonly #toolExecution: ToolExecutionPort | undefined;
+  readonly #limits: ToolLoopLimits;
 
-  constructor(model: LanguageModelPort, maxTokens = 1_024) {
-    this.#model = model;
-    this.#maxTokens = maxTokens;
+  constructor(dependencies: ActionGeneratorDependencies | LanguageModelPort) {
+    // A bare port is still accepted because most call sites have nothing to say
+    // about tools or limits, and forcing them to wrap it in an object would be
+    // ceremony with no information in it.
+    const resolved: ActionGeneratorDependencies =
+      'complete' in dependencies ? { model: dependencies } : dependencies;
+
+    this.#model = resolved.model;
+    this.#toolExecution = resolved.toolExecution;
+    this.#limits = resolved.limits ?? defaultToolLoopLimits;
   }
 
   async generate(
     context: CognitiveContext,
     decision: Decision,
-  ): Promise<Result<readonly Action[], Error>> {
+    options: PortOptions,
+    sink?: TurnSink,
+  ): Promise<GenerationOutcome> {
     // Silence needs no provider call. Spending a round trip to generate text
     // that is then discarded would be the wrong shape entirely.
     if (decision.kind === 'stay_silent') {
-      return ok([]);
+      return {
+        actions: [],
+        modelCalls: [],
+        diagnostics: [],
+        toolCallCount: 0,
+        failure: null,
+      };
     }
 
     const instruction = decisionInstruction(decision);
-    const system = instruction === null
-      ? buildSystemPrompt(context)
-      : `${buildSystemPrompt(context)}\n\n${instruction}`;
+    const system =
+      instruction === null
+        ? buildSystemPrompt(context)
+        : `${buildSystemPrompt(context)}\n\n${instruction}`;
 
-    const result = await this.#model.complete({
-      system,
-      messages: buildMessages(context),
-      maxTokens: this.#maxTokens,
-    });
+    // Wrapped rather than passed through, so a caller's throwing callback
+    // cannot fail a turn that has already produced a good answer.
+    const onToken =
+      sink?.onToken === undefined
+        ? null
+        : (chunk: string): void => {
+            deliver(sink, (target) => target.onToken?.(chunk));
+          };
 
-    if (!result.ok) {
-      return err(result.error);
-    }
-
-    if (result.value.refused) {
-      return err(new Error('The model provider declined to answer this request.'));
-    }
-
-    const text = result.value.text.trim();
-    if (text.length === 0) {
-      return err(new Error('The model returned an empty response.'));
-    }
-
-    const actions: Action[] = [
+    return runToolLoop(
       {
-        id: newActionId(),
-        type: 'speak',
-        decisionId: decision.id,
-        text,
-        tone: toneFor(context, decision),
+        model: this.#model,
+        ...(this.#toolExecution !== undefined ? { tools: this.#toolExecution } : {}),
+        limits: this.#limits,
       },
-    ];
-
-    // The decision to remember is surfaced as its own action so it appears in
-    // the action stream and the audit trail. The write itself is asynchronous.
-    if (decision.kind === 'remember') {
-      actions.push({
-        id: newActionId(),
-        type: 'remember',
-        decisionId: decision.id,
-        content: context.perception.text,
-        importance: 0.7,
-      });
-    }
-
-    return ok(actions);
+      {
+        companionId: context.companionId,
+        context,
+        decision,
+        system,
+        messages: buildMessages(context),
+        // Tool selection is the model's, not Core's. Pre-selecting here and
+        // then asking the model would be two reasoning systems disagreeing at
+        // the cost of a round trip.
+        availableTools: context.availableTools,
+        onToken,
+      },
+      options,
+    );
   }
 }

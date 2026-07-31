@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { deliberate } from '@nexa/core';
-import { defaultBudget, defaultPersonality } from '@nexa/models';
+import {
+  confidence,
+  defaultBudget,
+  defaultPersonality,
+  importance,
+  timestamp,
+  valence,
+} from '@nexa/models';
 import type {
   CognitiveContext,
   ContextBudget,
+  DecisionHint,
+  Goal,
   IntentCandidate,
   Perception,
   RetrievedMemory,
@@ -23,12 +32,13 @@ const context = (overrides: {
   intents?: readonly IntentCandidate[];
   text?: string;
   memories?: readonly RetrievedMemory[];
-  goals?: readonly string[];
+  goals?: readonly Goal[];
   budget?: ContextBudget;
+  hint?: DecisionHint | null;
 }): CognitiveContext => {
   const perception: Perception = {
     text: overrides.text ?? 'How does the anchor system work?',
-    intents: overrides.intents ?? [{ kind: 'question', confidence: 0.9 }],
+    intents: overrides.intents ?? [{ kind: 'question', confidence: confidence(0.9) }],
     emotion: null,
     entities: [],
   };
@@ -37,7 +47,7 @@ const context = (overrides: {
     turnId: trustExternalId<TurnId>('turn-1'),
     companionId: trustExternalId<CompanionId>('companion-1'),
     userId: trustExternalId<UserId>('user-1'),
-    at: '2026-07-29T12:00:00.000Z',
+    at: timestamp('2026-07-29T12:00:00.000Z'),
     perception,
     identity: {
       name: 'Nexa',
@@ -50,6 +60,11 @@ const context = (overrides: {
     retrievedMemories: overrides.memories ?? [],
     goals: overrides.goals ?? [],
     availableTools: [],
+    emotion: null,
+    relationship: null,
+    world: null,
+    plan: null,
+    hint: overrides.hint ?? null,
     budget: overrides.budget ?? { ...defaultBudget(), omissions: [] },
   };
 };
@@ -57,17 +72,20 @@ const context = (overrides: {
 const memory = (score: number): RetrievedMemory => ({
   memory: {
     id: trustExternalId<MemoryId>('mem-1'),
+    userId: trustExternalId<UserId>('user-1'),
     type: 'semantic',
     content: 'The user is building an AR companion in Unity.',
-    createdAt: '2026-07-01T00:00:00.000Z',
-    importance: 0.8,
-    confidence: 0.9,
-    valence: 0.2,
+    createdAt: timestamp('2026-07-01T00:00:00.000Z'),
+    importance: importance(0.8),
+    confidence: confidence(0.9),
+    valence: valence(0.2),
     source: 'conversation',
     tags: [],
     relatedTo: [],
+    embedding: null,
+    metadata: {},
   },
-  score,
+  score: confidence(score),
   signals: {
     semantic: score,
     recency: 0.5,
@@ -97,7 +115,7 @@ describe('deliberate', () => {
 
   it('asks rather than guesses when intent confidence is low', () => {
     const decision = deliberate(
-      context({ intents: [{ kind: 'question', confidence: 0.2 }] }),
+      context({ intents: [{ kind: 'question', confidence: confidence(0.2) }] }),
     );
 
     expect(decision.kind).toBe('ask_clarifying_question');
@@ -144,7 +162,7 @@ describe('deliberate', () => {
 
   it('treats a correction as something to remember', () => {
     const decision = deliberate(
-      context({ intents: [{ kind: 'correction', confidence: 0.8 }] }),
+      context({ intents: [{ kind: 'correction', confidence: confidence(0.8) }] }),
     );
 
     expect(decision.kind).toBe('remember');
@@ -152,7 +170,7 @@ describe('deliberate', () => {
 
   it('acknowledges casual conversation instead of expanding on it', () => {
     const decision = deliberate(
-      context({ text: 'hey', intents: [{ kind: 'casual', confidence: 0.7 }] }),
+      context({ text: 'hey', intents: [{ kind: 'casual', confidence: confidence(0.7) }] }),
     );
 
     expect(decision.kind).toBe('acknowledge');
@@ -161,12 +179,12 @@ describe('deliberate', () => {
 
   it('always produces at least one reason code', () => {
     const kinds: readonly IntentCandidate[][] = [
-      [{ kind: 'question', confidence: 0.9 }],
-      [{ kind: 'request', confidence: 0.8 }],
-      [{ kind: 'planning', confidence: 0.7 }],
-      [{ kind: 'emotional_support', confidence: 0.8 }],
-      [{ kind: 'statement', confidence: 0.6 }],
-      [{ kind: 'correction', confidence: 0.9 }],
+      [{ kind: 'question', confidence: confidence(0.9) }],
+      [{ kind: 'request', confidence: confidence(0.8) }],
+      [{ kind: 'planning', confidence: confidence(0.7) }],
+      [{ kind: 'emotional_support', confidence: confidence(0.8) }],
+      [{ kind: 'statement', confidence: confidence(0.6) }],
+      [{ kind: 'correction', confidence: confidence(0.9) }],
     ];
 
     for (const intents of kinds) {

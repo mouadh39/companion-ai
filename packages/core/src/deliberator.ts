@@ -1,10 +1,16 @@
 import type {
   CognitiveContext,
   Decision,
+  DecisionHint,
   DecisionKind,
   ReasonCode,
 } from '@nexa/models';
-import { isDegraded, primaryIntent } from '@nexa/models';
+import {
+  MIN_ACTIONABLE_HINT_CONFIDENCE,
+  confidence,
+  isDegraded,
+  primaryIntent,
+} from '@nexa/models';
 
 /**
  * A decision before an identifier has been assigned to it.
@@ -35,6 +41,26 @@ export type DecisionDraft = Omit<Decision, 'id'>;
  * If deliberation ever appears to need information it does not have, that is a
  * bug in context assembly — never a reason to reach out from here.
  */
+/**
+ * A hint worth acting on, or null.
+ *
+ * Two filters, both deliberate. The confidence floor keeps a weak opinion from
+ * adding noise to cases that were already uncertain. The `stay_silent`
+ * exclusion is the sharper one: an advisor that can silence the companion can
+ * make it unresponsive through a single bad model call, and silence is the one
+ * outcome the user cannot distinguish from a fault.
+ */
+const actionableHint = (hint: DecisionHint | null | undefined): DecisionHint | null => {
+  // `undefined` is accepted alongside `null` because replay reads contexts that
+  // were serialised before this field existed. A pure function that throws on a
+  // two-month-old log row would make the replay harness — the main reason for
+  // keeping deliberation pure — useless against exactly the history it needs.
+  if (hint === null || hint === undefined) return null;
+  if (hint.confidence < MIN_ACTIONABLE_HINT_CONFIDENCE) return null;
+  if (hint.suggested === 'stay_silent') return null;
+  return hint;
+};
+
 export const deliberate = (context: CognitiveContext): DecisionDraft => {
   const reasons: ReasonCode[] = [];
   const alternatives: DecisionKind[] = [];
@@ -53,7 +79,7 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
   if (context.perception.text.trim().length === 0) {
     return {
       kind: 'stay_silent',
-      confidence: 0.9,
+      confidence: confidence(0.9),
       reasonCodes: ['nothing_to_add'],
       alternatives: [],
       groundedIn: [],
@@ -66,11 +92,31 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
   if (intent === 'unknown' || intentConfidence < 0.4) {
     reasons.push(intentConfidence < 0.4 ? 'low_confidence' : 'ambiguous_intent');
     if (degraded) reasons.push('degraded_context');
+
+    // The one place the advisor is consulted: the rules have run out and would
+    // otherwise fall back to asking. A hint may only break a tie the rules
+    // could not settle — allowing it to override a confident rule would make
+    // the rules decorative, and would put an unreplayable judgement on a path
+    // that is meant to be reproducible.
+    const advised = actionableHint(context.hint);
+    if (advised !== null) {
+      return {
+        kind: advised.suggested,
+        // Never inherits the advisor's own confidence. The rules were unsure,
+        // and an advisor's certainty is not evidence that they should not have
+        // been — so the result stays modest whatever the hint claims.
+        confidence: confidence(0.6),
+        reasonCodes: [...reasons, ...advised.reasonCodes],
+        alternatives: ['ask_clarifying_question'],
+        groundedIn,
+      };
+    }
+
     alternatives.push('answer', 'acknowledge');
 
     return {
       kind: 'ask_clarifying_question',
-      confidence: 0.55,
+      confidence: confidence(0.55),
       reasonCodes: reasons,
       alternatives,
       groundedIn,
@@ -93,7 +139,7 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
 
       return {
         kind: 'answer',
-        confidence: degraded ? 0.6 : 0.85,
+        confidence: confidence(degraded ? 0.6 : 0.85),
         reasonCodes: reasons,
         alternatives,
         groundedIn,
@@ -107,7 +153,7 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
 
       return {
         kind: 'answer',
-        confidence: 0.8,
+        confidence: confidence(0.8),
         reasonCodes: reasons,
         alternatives,
         groundedIn,
@@ -121,7 +167,7 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
 
       return {
         kind: 'answer',
-        confidence: 0.75,
+        confidence: confidence(0.75),
         reasonCodes: reasons,
         alternatives,
         groundedIn,
@@ -136,7 +182,7 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
 
       return {
         kind: 'remember',
-        confidence: 0.8,
+        confidence: confidence(0.8),
         reasonCodes: reasons,
         alternatives,
         groundedIn,
@@ -150,7 +196,7 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
 
       return {
         kind: 'acknowledge',
-        confidence: 0.7,
+        confidence: confidence(0.7),
         reasonCodes: reasons,
         alternatives,
         groundedIn,
@@ -167,7 +213,7 @@ export const deliberate = (context: CognitiveContext): DecisionDraft => {
 
   return {
     kind: 'ask_clarifying_question',
-    confidence: 0.5,
+    confidence: confidence(0.5),
     reasonCodes: ['ambiguous_intent'],
     alternatives: [],
     groundedIn,
