@@ -2,6 +2,15 @@ import type { CompanionId, TurnId, UserId } from '@nexa/shared';
 import type { Identity, PersonalityProfile } from './identity.js';
 import type { Perception } from './perception.js';
 import type { RetrievedMemory } from './memory.js';
+import type { Goal } from './goal.js';
+import type { Tool } from './tool.js';
+import type { EmotionState } from './emotion.js';
+import type { Relationship } from './relationship.js';
+import type { WorldSnapshot } from './world-snapshot.js';
+import type { PlanSnapshot } from './plan.js';
+import type { DecisionHint } from './decision.js';
+import type { MessageRole } from '../enums/conversation.js';
+import type { Timestamp } from '../value-objects/timestamp.js';
 
 /**
  * The named regions of a prompt. Every one competes for the same token budget.
@@ -17,6 +26,18 @@ export type ContextSection =
   | 'world'
   | 'tools';
 
+export const CONTEXT_SECTIONS = [
+  'identity',
+  'personality',
+  'working_memory',
+  'retrieved_memories',
+  'goals',
+  'relationship',
+  'emotion',
+  'world',
+  'tools',
+] as const satisfies readonly ContextSection[];
+
 /**
  * Why a section is missing from the assembled context.
  *
@@ -24,7 +45,27 @@ export type ContextSection =
  * nothing to say" and "the world model timed out" changes what the companion
  * should do, and a null section cannot tell you which happened.
  */
-export type OmissionReason = 'budget_exceeded' | 'port_timeout' | 'port_error' | 'empty';
+export type OmissionReason =
+  | 'budget_exceeded'
+  | 'port_timeout'
+  | 'port_error'
+  /**
+   * The turn was already out of time before this port was reached.
+   *
+   * Distinct from `port_timeout` on purpose. That one indicts the port; this
+   * one indicts everything that ran before it. Collapsing the two sends you
+   * optimising a dependency that was never slow.
+   */
+  | 'not_attempted'
+  | 'empty';
+
+export const OMISSION_REASONS = [
+  'budget_exceeded',
+  'port_timeout',
+  'port_error',
+  'not_attempted',
+  'empty',
+] as const satisfies readonly OmissionReason[];
 
 export interface SectionOmission {
   readonly section: ContextSection;
@@ -54,9 +95,23 @@ export interface ContextBudget {
   readonly omissions: readonly SectionOmission[];
 }
 
-/** True when any section was dropped for any reason — the `degraded` signal. */
+/**
+ * True when a section the companion *should* have had was lost.
+ *
+ * `empty` is excluded, and that exclusion is what makes this signal worth
+ * emitting. A companion with no active goals, no relevant memories, or no tools
+ * is not a degraded companion — it is a companion in a situation where those
+ * sections have nothing to say. Counting those, every turn is degraded, the
+ * ratio sits at ~100%, and the one metric that tracks quality in a system built
+ * to fail quietly tracks nothing at all.
+ *
+ * What remains — `port_timeout`, `port_error`, `budget_exceeded`,
+ * `not_attempted` — are all cases where something existed and did not arrive.
+ * The full list, `empty` entries included, stays on `omissions` for anyone who
+ * needs it.
+ */
 export const isDegraded = (budget: ContextBudget): boolean =>
-  budget.omissions.length > 0;
+  budget.omissions.some((omission) => omission.reason !== 'empty');
 
 export const totalSpent = (budget: ContextBudget): number =>
   Object.values(budget.spent).reduce<number>((sum, n) => sum + (n ?? 0), 0);
@@ -91,11 +146,15 @@ export const defaultBudget = (totalLimit = 12_000): ContextBudget => ({
  *
  * Working memory holds these; it is bounded, ephemeral, and never the system of
  * record. Anything worth keeping is promoted to long-term memory asynchronously.
+ *
+ * Deliberately not a `Message`: this is the compact projection deliberation
+ * reads, without ids, tokens or tool payloads. Working memory is rebuilt every
+ * turn, so its shape is optimised for being cheap rather than for being complete.
  */
 export interface ConversationTurn {
-  readonly role: 'user' | 'companion';
+  readonly role: Extract<MessageRole, 'user' | 'companion'>;
   readonly content: string;
-  readonly at: string;
+  readonly at: Timestamp;
 }
 
 /**
@@ -114,7 +173,7 @@ export interface CognitiveContext {
   readonly companionId: CompanionId;
   readonly userId: UserId;
   /** Sampled once, at the start of the turn. Deliberation never reads a clock. */
-  readonly at: string;
+  readonly at: Timestamp;
 
   readonly perception: Perception;
   readonly identity: Identity;
@@ -126,9 +185,47 @@ export interface CognitiveContext {
    * Populated by capability packages in later milestones. Empty in Milestone 1,
    * but present in the shape so adding them changes an implementation rather
    * than this contract.
+   *
+   * Now typed against the real entities rather than `string[]`. Deliberation
+   * needs a goal's priority and status to weigh it; a name alone forces the
+   * reasoning to be reconstructed from text, which is exactly the confabulation
+   * the structured domain exists to avoid.
    */
-  readonly goals: readonly string[];
-  readonly availableTools: readonly string[];
+  readonly goals: readonly Goal[];
+  readonly availableTools: readonly Tool[];
+  /** The companion's read of the user's state, or null when nothing was inferred. */
+  readonly emotion: EmotionState | null;
+  /** Null until a relationship record exists — the very first turn with a user. */
+  readonly relationship: Relationship | null;
+
+  /**
+   * What the companion believes is around the user, sampled once.
+   *
+   * Null when no world capability is composed in — which is *not* a
+   * degradation. A companion with no world model is not missing something it
+   * had; it simply has no such faculty. Recording an omission for it would mark
+   * every turn degraded until every engine ships, and destroy the one metric
+   * that tracks quality in a system designed to degrade quietly.
+   */
+  readonly world: WorldSnapshot | null;
+
+  /**
+   * The plan in progress, as of the last planning pass.
+   *
+   * May be one turn stale by design: planning runs in the worker, never on the
+   * conversational path. Null when nothing is being planned or no planning
+   * capability is composed in.
+   */
+  readonly plan: PlanSnapshot | null;
+
+  /**
+   * An advisory opinion formed during assembly, for deliberation to consult.
+   *
+   * Present here rather than obtained inside `deliberate()` so that the model
+   * call — if the advisor is one — happens on the I/O stage where every other
+   * call happens, and the decision stays a pure function of a recorded value.
+   */
+  readonly hint: DecisionHint | null;
 
   readonly budget: ContextBudget;
 }

@@ -1,3 +1,5 @@
+import type { ConfidenceScore } from '../value-objects/score.js';
+
 /**
  * What the companion understood from the incoming message, before it has
  * decided anything.
@@ -16,10 +18,21 @@ export type IntentKind =
   | 'correction'
   | 'unknown';
 
+export const INTENT_KINDS = [
+  'question',
+  'request',
+  'statement',
+  'planning',
+  'emotional_support',
+  'casual',
+  'correction',
+  'unknown',
+] as const satisfies readonly IntentKind[];
+
 export interface IntentCandidate {
   readonly kind: IntentKind;
-  /** 0–1. Multiple intents may be present in one message. */
-  readonly confidence: number;
+  /** Multiple intents may be present in one message. */
+  readonly confidence: ConfidenceScore;
 }
 
 export type UserEmotion =
@@ -35,6 +48,20 @@ export type UserEmotion =
   | 'tired'
   | 'proud';
 
+export const USER_EMOTIONS = [
+  'calm',
+  'happy',
+  'excited',
+  'curious',
+  'focused',
+  'confused',
+  'frustrated',
+  'stressed',
+  'sad',
+  'tired',
+  'proud',
+] as const satisfies readonly UserEmotion[];
+
 /**
  * An *estimate* of the user's emotional state, never a claim about it.
  *
@@ -44,8 +71,8 @@ export type UserEmotion =
  */
 export interface EmotionSignal {
   readonly emotion: UserEmotion;
-  readonly intensity: number;
-  readonly confidence: number;
+  readonly intensity: ConfidenceScore;
+  readonly confidence: ConfidenceScore;
 }
 
 export interface Perception {

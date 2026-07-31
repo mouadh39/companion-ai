@@ -36,6 +36,27 @@ export type TraitName =
   | 'warmth'
   | 'creativity';
 
+export const TRAIT_NAMES = [
+  'curiosity',
+  'empathy',
+  'humor',
+  'patience',
+  'confidence',
+  'playfulness',
+  'warmth',
+  'creativity',
+] as const satisfies readonly TraitName[];
+
+/**
+ * Trait magnitudes, 0–1.
+ *
+ * Left as plain `number` rather than branded, and the exception is deliberate.
+ * Branding exists to stop one quantity being passed where a different one
+ * belongs — a confidence where an importance was meant. Every value in this
+ * record is the same kind of quantity, they are only ever read as a group, and
+ * one guard (`isValidPersonality`) covers the whole structure. A brand here
+ * would add ceremony without removing a reachable mistake.
+ */
 export type TraitScores = Readonly<Record<TraitName, number>>;
 
 /**
@@ -57,17 +78,6 @@ export interface PersonalityProfile {
   /** Incremented on every persisted evolution, so drift is auditable. */
   readonly revision: number;
 }
-
-const TRAIT_NAMES: readonly TraitName[] = [
-  'curiosity',
-  'empathy',
-  'humor',
-  'patience',
-  'confidence',
-  'playfulness',
-  'warmth',
-  'creativity',
-];
 
 /** True when every trait and adaptive value sits within 0–1. */
 export const isValidPersonality = (profile: PersonalityProfile): boolean => {
