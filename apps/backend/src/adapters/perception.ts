@@ -6,6 +6,7 @@ import type {
   Perception,
   UserEmotion,
 } from '@nexa/models';
+import { confidence } from '@nexa/models';
 
 /**
  * Rule-based perception.
@@ -61,28 +62,28 @@ export class HeuristicPerception implements PerceptionPort {
     const intents: IntentCandidate[] = [];
 
     if (lower.endsWith('?') || includesAny(lower, QUESTION_MARKERS)) {
-      intents.push({ kind: 'question', confidence: lower.endsWith('?') ? 0.9 : 0.6 });
+      intents.push({ kind: 'question', confidence: confidence(lower.endsWith('?') ? 0.9 : 0.6) });
     }
     if (includesAny(lower, CORRECTION_MARKERS)) {
-      intents.push({ kind: 'correction', confidence: 0.75 });
+      intents.push({ kind: 'correction', confidence: confidence(0.75) });
     }
     if (includesAny(lower, REQUEST_MARKERS)) {
-      intents.push({ kind: 'request', confidence: 0.7 });
+      intents.push({ kind: 'request', confidence: confidence(0.7) });
     }
     if (includesAny(lower, PLANNING_MARKERS)) {
-      intents.push({ kind: 'planning', confidence: 0.65 });
+      intents.push({ kind: 'planning', confidence: confidence(0.65) });
     }
     if (includesAny(lower, CASUAL_MARKERS) && normalised.length < 40) {
-      intents.push({ kind: 'casual', confidence: 0.7 });
+      intents.push({ kind: 'casual', confidence: confidence(0.7) });
     }
 
     const emotion = this.#detectEmotion(lower);
     if (emotion !== null && (emotion.emotion === 'sad' || emotion.emotion === 'stressed')) {
-      intents.push({ kind: 'emotional_support', confidence: 0.6 });
+      intents.push({ kind: 'emotional_support', confidence: confidence(0.6) });
     }
 
     if (intents.length === 0 && normalised.length > 0) {
-      intents.push({ kind: 'statement', confidence: 0.5 });
+      intents.push({ kind: 'statement', confidence: confidence(0.5) });
     }
 
     intents.sort((a, b) => b.confidence - a.confidence);
@@ -101,7 +102,7 @@ export class HeuristicPerception implements PerceptionPort {
         // Confidence is capped low on purpose. These are keyword matches, and
         // overstating certainty here would let a single word convince the
         // companion that someone is upset when they are not.
-        return { emotion, intensity: 0.6, confidence: 0.55 };
+        return { emotion, intensity: confidence(0.6), confidence: confidence(0.55) };
       }
     }
     return null;

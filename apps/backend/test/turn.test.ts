@@ -14,6 +14,41 @@ import type { AppConfig } from '../dist/config.js';
  * interface is still close to zero.
  */
 
+/**
+ * The wire shapes the endpoint returns.
+ *
+ * Declared here rather than imported: this is a test of the HTTP contract, and
+ * typing it against the server's internal types would let a breaking change to
+ * the response body pass unnoticed. Written out, the test fails to compile when
+ * the contract moves — which is the point.
+ *
+ * They also give `response.json<T>()` something to return. Untyped it yields
+ * `any`, which silently disables every downstream check in this file.
+ */
+interface TurnResponseBody {
+  readonly actions: readonly {
+    readonly type: string;
+    readonly text?: string;
+    readonly decisionId: string;
+  }[];
+  readonly decision: {
+    readonly id: string;
+    readonly kind: string;
+    readonly confidence: number;
+    readonly reasonCodes: readonly string[];
+  };
+  readonly degraded: boolean;
+}
+
+interface ErrorBody {
+  readonly error: string;
+}
+
+interface HealthBody {
+  readonly status: string;
+  readonly model: string;
+}
+
 const config: AppConfig = {
   host: '127.0.0.1',
   port: 0,
@@ -44,33 +79,33 @@ describe('POST /v1/turn', () => {
     const response = await server.inject(turn('How do anchors work?'));
 
     expect(response.statusCode).toBe(200);
-    const body = response.json();
+    const body = response.json<TurnResponseBody>();
     expect(body.actions).toHaveLength(1);
-    expect(body.actions[0].type).toBe('speak');
-    expect(body.actions[0].text).toBe('Anchors keep content welded to a real surface.');
+    expect(body.actions[0]?.type).toBe('speak');
+    expect(body.actions[0]?.text).toBe('Anchors keep content welded to a real surface.');
     expect(body.decision.kind).toBe('answer');
   });
 
   it('returns the decision alongside the actions, so any answer is accountable', async () => {
     const { server } = harness(['Sure.']);
 
-    const body = (await server.inject(turn('Can you help me build this?'))).json();
+    const body = (await server.inject(turn('Can you help me build this?'))).json<TurnResponseBody>();
 
     expect(body.decision.reasonCodes.length).toBeGreaterThan(0);
     expect(body.decision.confidence).toBeGreaterThan(0);
-    expect(body.actions[0].decisionId).toBe(body.decision.id);
+    expect(body.actions[0]?.decisionId).toBe(body.decision.id);
   });
 
   it('links every action back to the decision that produced it', async () => {
     const { server } = harness(["Understood — I'll remember that."]);
 
-    const body = (await server.inject(turn("Actually, that's wrong — I use pnpm."))).json();
+    const body = (await server.inject(turn("Actually, that's wrong — I use pnpm."))).json<TurnResponseBody>();
 
     expect(body.decision.kind).toBe('remember');
     for (const action of body.actions) {
       expect(action.decisionId).toBe(body.decision.id);
     }
-    expect(body.actions.map((a: { type: string }) => a.type)).toContain('remember');
+    expect(body.actions.map((action) => action.type)).toContain('remember');
   });
 
   it('emits the turn lifecycle and decision events', async () => {
@@ -89,14 +124,21 @@ describe('POST /v1/turn', () => {
     expect(seen).toEqual(['started', 'decided', 'completed']);
   });
 
-  it('reports degradation rather than hiding a thin answer', async () => {
+  it('does not call an empty section a degradation', async () => {
     const { server } = harness(['Here is what I know.']);
 
-    const body = (await server.inject(turn('How do anchors work?'))).json();
+    const body = (await server.inject(turn('How do anchors work?'))).json<TurnResponseBody>();
 
-    // Milestone 1 has no memory store, so retrieval is legitimately empty and
-    // the turn is expected to report itself as degraded.
-    expect(body.degraded).toBe(true);
+    // There is no memory store yet, so retrieval, goals and tools are all
+    // legitimately empty. That is not degradation: nothing was lost, there was
+    // simply nothing to lose. Counting it would pin `degraded` at true on every
+    // turn and make the signal useless for the case it exists to catch — a
+    // section that *should* have arrived and did not.
+    //
+    // `@nexa/core`'s `assembler-graph.test.ts` covers the other side: a port
+    // that fails does mark the turn degraded.
+    expect(body.degraded).toBe(false);
+    expect(body.actions.some((action) => action.type === 'speak')).toBe(true);
   });
 
   it('rejects a request with no text', async () => {
@@ -109,7 +151,7 @@ describe('POST /v1/turn', () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().error).toBe('invalid_request');
+    expect(response.json<ErrorBody>().error).toBe('invalid_request');
   });
 
   it('rejects a request missing identity', async () => {
@@ -128,16 +170,16 @@ describe('POST /v1/turn', () => {
     const { server } = harness(['First.', 'Second.']);
 
     await server.inject(turn('My name is Mouadh.'));
-    const second = (await server.inject(turn('What did I just tell you?'))).json();
+    const second = (await server.inject(turn('What did I just tell you?'))).json<TurnResponseBody>();
 
-    expect(second.actions[0].text).toBe('Second.');
+    expect(second.actions[0]?.text).toBe('Second.');
     expect(second.decision.kind).toBe('answer');
   });
 
   it('serves health without touching the provider', async () => {
     const { server } = harness();
 
-    const body = (await server.inject({ method: 'GET', url: '/health' })).json();
+    const body = (await server.inject({ method: 'GET', url: '/health' })).json<HealthBody>();
 
     expect(body.status).toBe('ok');
     expect(body.model).toBe('scripted');

@@ -1,10 +1,12 @@
 import type { CompanionId } from '@nexa/shared';
 import type {
   ConversationTurn,
+  Goal,
   Identity,
   MemoryCandidate,
   PersonalityProfile,
   RetrievedMemory,
+  Tool,
 } from '@nexa/models';
 import { defaultPersonality } from '@nexa/models';
 import type {
@@ -139,13 +141,13 @@ export class RecordingMemoryWrite implements MemoryWritePort {
 }
 
 export class NoGoals implements GoalPort {
-  async active(): Promise<readonly string[]> {
+  async active(): Promise<readonly Goal[]> {
     return [];
   }
 }
 
 export class NoTools implements ToolRegistryPort {
-  async available(): Promise<readonly string[]> {
+  async available(): Promise<readonly Tool[]> {
     return [];
   }
 }
