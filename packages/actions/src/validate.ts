@@ -4,9 +4,8 @@ import {
   MAX_SPEAK_LENGTH,
   type Action,
   type ActionType,
-} from './action.js';
-
-export type RejectionReason = 'schema' | 'safety' | 'permission' | 'budget';
+  type RejectionReason,
+} from '@nexa/models';
 
 export interface ActionRejection {
   readonly actionType: ActionType | 'unknown';
@@ -41,10 +40,10 @@ export const validateAction = (action: Action): Result<Action, ActionRejection> 
     }
 
     case 'wait': {
-      if (!Number.isFinite(action.durationMs) || action.durationMs < 0) {
+      if (!Number.isFinite(action.duration) || action.duration < 0) {
         return reject('schema', 'Wait duration must be a non-negative, finite number.');
       }
-      if (action.durationMs > 30_000) {
+      if (action.duration > 30_000) {
         return reject('budget', 'Wait exceeds the 30s ceiling.');
       }
       return ok(action);
@@ -56,6 +55,16 @@ export const validateAction = (action: Action): Result<Action, ActionRejection> 
       }
       if (action.importance < 0 || action.importance > 1) {
         return reject('schema', 'Importance must be within 0–1.');
+      }
+      return ok(action);
+    }
+
+    case 'call_tool': {
+      // The tool's own JSON Schema governs the arguments; the registry checks
+      // them against it. What is verifiable here is that a tool was actually
+      // named — an empty id is a generation failure, not a permission question.
+      if (action.toolId.trim().length === 0) {
+        return reject('schema', 'Tool action names no tool.');
       }
       return ok(action);
     }
