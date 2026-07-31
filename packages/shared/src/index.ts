@@ -29,6 +29,14 @@ export type {
   DecisionId,
   ActionId,
   GoalId,
+  ConversationId,
+  MessageId,
+  RelationshipId,
+  WorldObjectId,
+  VoiceSessionId,
+  PlanId,
+  SessionId,
+  ToolId,
 } from './ids.js';
 export {
   uuidv7,
@@ -38,6 +46,13 @@ export {
   newDecisionId,
   newActionId,
   newGoalId,
+  newConversationId,
+  newMessageId,
+  newRelationshipId,
+  newWorldObjectId,
+  newVoiceSessionId,
+  newPlanId,
+  newSessionId,
   trustExternalId,
 } from './ids.js';
 

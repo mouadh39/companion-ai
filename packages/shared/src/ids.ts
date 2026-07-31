@@ -22,6 +22,29 @@ export type MemoryId = Branded<string, 'MemoryId'>;
 export type DecisionId = Branded<string, 'DecisionId'>;
 export type ActionId = Branded<string, 'ActionId'>;
 export type GoalId = Branded<string, 'GoalId'>;
+export type ConversationId = Branded<string, 'ConversationId'>;
+export type MessageId = Branded<string, 'MessageId'>;
+export type RelationshipId = Branded<string, 'RelationshipId'>;
+export type WorldObjectId = Branded<string, 'WorldObjectId'>;
+export type VoiceSessionId = Branded<string, 'VoiceSessionId'>;
+export type PlanId = Branded<string, 'PlanId'>;
+/**
+ * Identifies a client's connection, not a conversation.
+ *
+ * Two devices talking to one companion hold two sessions and one conversation.
+ * Conflating them is what makes multi-device state impossible to reason about:
+ * the thing a stream reconnects to and the thing a companion remembers are not
+ * the same thing.
+ */
+export type SessionId = Branded<string, 'SessionId'>;
+
+/**
+ * A tool's identifier is its stable registry name (`calendar.createEvent`), not
+ * a generated id. Tools are declared by operators and referenced by the model
+ * by name, so a random uuid would be an indirection with nothing on the other
+ * end of it.
+ */
+export type ToolId = Branded<string, 'ToolId'>;
 
 /**
  * UUID v7 — time-ordered, so identifiers sort chronologically.
@@ -70,6 +93,13 @@ export const newMemoryId = (): MemoryId => uuidv7() as MemoryId;
 export const newDecisionId = (): DecisionId => uuidv7() as DecisionId;
 export const newActionId = (): ActionId => uuidv7() as ActionId;
 export const newGoalId = (): GoalId => uuidv7() as GoalId;
+export const newConversationId = (): ConversationId => uuidv7() as ConversationId;
+export const newMessageId = (): MessageId => uuidv7() as MessageId;
+export const newRelationshipId = (): RelationshipId => uuidv7() as RelationshipId;
+export const newWorldObjectId = (): WorldObjectId => uuidv7() as WorldObjectId;
+export const newVoiceSessionId = (): VoiceSessionId => uuidv7() as VoiceSessionId;
+export const newPlanId = (): PlanId => uuidv7() as PlanId;
+export const newSessionId = (): SessionId => uuidv7() as SessionId;
 
 /**
  * Adopts an externally supplied identifier.
