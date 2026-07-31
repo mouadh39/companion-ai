@@ -3,11 +3,24 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**", "tsconfig.tsbuildinfo"]
     },
-    "typecheck": { "dependsOn": ["^build"] },
-    "test": { "dependsOn": ["^build"] },
-    "lint": {},
+
+    "typecheck": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
+
+    "test": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
+
+    "lint": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+
     "clean": { "cache": false },
     "dev": { "cache": false, "persistent": true }
   }
