@@ -41,6 +41,8 @@ and it is the rule that must never be relaxed.
 ```
 shared → models → events → core → providers → apps
                 → actions ↗
+                → personality ↗
+                → identity ↗
 ```
 
 | Package | Role |
@@ -50,6 +52,8 @@ shared → models → events → core → providers → apps
 | `@nexa/events` | The envelope, the typed bus, and the event catalogue. |
 | `@nexa/actions` | Validation for the vocabulary clients execute. |
 | `@nexa/core` | The cognitive turn, the ports, and the execution policy. Owns no engine. |
+| `@nexa/identity` | Who Nexa is — the canonical, frozen, versioned self-definition. |
+| `@nexa/personality` | How the companion communicates — traits composed into a per-turn profile. |
 | `@nexa/providers` | Language model implementations behind `LanguageModelPort`. |
 | `@nexa/backend` | The composition root — the only place a concrete implementation is named. |
 

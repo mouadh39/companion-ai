@@ -19,6 +19,15 @@ export type UserId = Branded<string, 'UserId'>;
 export type TurnId = Branded<string, 'TurnId'>;
 export type EventId = Branded<string, 'EventId'>;
 export type MemoryId = Branded<string, 'MemoryId'>;
+/**
+ * A durable understanding derived from several memories.
+ *
+ * Branded apart from `MemoryId` because the two are not interchangeable and the
+ * substitution is the exact mistake reflection must not make: an insight is a
+ * conclusion *about* memories, never one of them, and code that could pass one
+ * where the other belongs is code that can quietly turn a guess into a fact.
+ */
+export type InsightId = Branded<string, 'InsightId'>;
 export type DecisionId = Branded<string, 'DecisionId'>;
 export type ActionId = Branded<string, 'ActionId'>;
 export type GoalId = Branded<string, 'GoalId'>;
@@ -90,6 +99,7 @@ export const uuidv7 = (): string => {
 export const newTurnId = (): TurnId => uuidv7() as TurnId;
 export const newEventId = (): EventId => uuidv7() as EventId;
 export const newMemoryId = (): MemoryId => uuidv7() as MemoryId;
+export const newInsightId = (): InsightId => uuidv7() as InsightId;
 export const newDecisionId = (): DecisionId => uuidv7() as DecisionId;
 export const newActionId = (): ActionId => uuidv7() as ActionId;
 export const newGoalId = (): GoalId => uuidv7() as GoalId;

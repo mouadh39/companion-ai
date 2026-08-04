@@ -4,12 +4,13 @@ import type {
   ConversationTurn,
   DecisionHint,
   EmotionState,
+  ExpressionProfile,
   Goal,
-  Identity,
+  IdentityProfile,
   MemoryCandidate,
   Perception,
   PersonalityProfile,
-  PlanSnapshot,
+  TaskPlan,
   Relationship,
   RetrievedMemory,
   Tool,
@@ -60,12 +61,57 @@ export interface PerceptionPort {
 
 // ── Tier 1 · context ────────────────────────────────────────────────────────
 
+/**
+ * Loads the canonical self-definition.
+ *
+ * Still a port even though `@nexa/identity` serves a frozen constant. The port
+ * is what keeps Core from importing that package, and it leaves room for a
+ * deployment whose companions differ — the turn asks "who is this companion?"
+ * and does not care that today every answer is the same object.
+ */
 export interface IdentityPort {
-  load(companionId: CompanionId, options: PortOptions): Promise<Identity>;
+  load(companionId: CompanionId, options: PortOptions): Promise<IdentityProfile>;
 }
 
 export interface PersonalityPort {
   load(companionId: CompanionId, options: PortOptions): Promise<PersonalityProfile>;
+}
+
+/**
+ * What the expression engine needs to compose a turn's delivery.
+ *
+ * Declared here rather than imported from `@nexa/personality`, because Core
+ * declaring a shape it needs is the whole point of the dependency rule — the
+ * adapter in the composition root maps this onto whatever the engine's own
+ * request type happens to be, and the engine can change that type without Core
+ * knowing.
+ *
+ * `preferences` is deliberately absent: no port supplies the user record yet,
+ * and inventing a default here would assert something about the user that
+ * nothing has established.
+ */
+export interface ExpressionRequest {
+  readonly personality: PersonalityProfile;
+  readonly perception: Perception;
+  readonly relationship: Relationship | null;
+  readonly recentTurns: readonly ConversationTurn[];
+}
+
+/**
+ * Composes how the companion should communicate this turn.
+ *
+ * Tier 1, and optional. A companion with no expression capability composed in is
+ * not degraded — generation reads the raw traits instead, which is what it did
+ * before this port existed.
+ *
+ * Async like every other port despite the reference implementation being a pure
+ * function. The uniformity is worth more than the microseconds: it means this
+ * port is budgeted, cancellable and recorded by the same `callPort` machinery as
+ * everything else, and an implementation that later needs to read something is
+ * not a signature change.
+ */
+export interface ExpressionPort {
+  compose(request: ExpressionRequest, options: PortOptions): Promise<ExpressionProfile>;
 }
 
 /**
@@ -174,7 +220,7 @@ export interface RelationshipPort {
  * decomposition on the path of every "how was your day?".
  */
 export interface PlanReadPort {
-  current(companionId: CompanionId, options: PortOptions): Promise<PlanSnapshot | null>;
+  current(companionId: CompanionId, options: PortOptions): Promise<TaskPlan | null>;
 }
 
 /** Everything an advisor sees. A read-only projection of what assembly produced. */
@@ -408,5 +454,13 @@ export interface ContextPorts {
   readonly relationship?: RelationshipPort;
   readonly plan?: PlanReadPort;
   readonly decisionAdvisor?: DecisionAdvisorPort;
+  /**
+   * Composes delivery from personality, relationship and the moment.
+   *
+   * Optional so that a deployment without it behaves exactly as the system did
+   * before the personality engine existed — the prompt reads raw traits and
+   * tone falls back to the heuristic in generation.
+   */
+  readonly expression?: ExpressionPort;
 }
 

@@ -15,6 +15,7 @@ import type {
 } from '@nexa/models';
 import { trustExternalId } from '@nexa/shared';
 import type { CompanionId, TurnId, UserId } from '@nexa/shared';
+import { testIdentity } from './fixtures.js';
 
 /**
  * The advisory boundary.
@@ -47,12 +48,8 @@ const context = (options: {
     entities: [],
     emotion: null,
   },
-  identity: {
-    name: 'Nexa',
-    coreValues: ['honesty'],
-    selfDescription: 'A companion.',
-    version: 1,
-  },
+  identity: testIdentity(),
+  expression: null,
   personality: defaultPersonality(),
   workingMemory: [],
   retrievedMemories: [],

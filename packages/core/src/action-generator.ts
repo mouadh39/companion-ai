@@ -1,4 +1,9 @@
-import type { CognitiveContext, Decision } from '@nexa/models';
+import type {
+  CognitiveContext,
+  Decision,
+  IdentityProfile,
+  InitiativeLevel,
+} from '@nexa/models';
 import { isDegraded } from '@nexa/models';
 import type { PortOptions } from './execution/index.js';
 import type { GenerationOutcome, ToolLoopLimits } from './generation/index.js';
@@ -28,24 +33,8 @@ import type { LanguageModelPort, ModelMessage, ToolExecutionPort } from './ports
 export const buildSystemPrompt = (context: CognitiveContext): string => {
   const parts: string[] = [];
 
-  parts.push(
-    [
-      `You are ${context.identity.name}.`,
-      context.identity.selfDescription,
-      `Your core values: ${context.identity.coreValues.join(', ')}.`,
-    ].join('\n'),
-  );
-
-  const traits = Object.entries(context.personality.traits)
-    .map(([name, value]) => `${name} ${value.toFixed(2)}`)
-    .join(', ');
-  parts.push(
-    [
-      'Your personality, as normalised traits from 0 to 1:',
-      traits,
-      'These shape how you communicate. They never change what is true, and they never override a safety consideration.',
-    ].join('\n'),
-  );
+  parts.push(identitySection(context.identity));
+  parts.push(expressionSection(context));
 
   if (context.goals.length > 0) {
     parts.push(
@@ -95,6 +84,125 @@ export const buildSystemPrompt = (context: CognitiveContext): string => {
   );
 
   return parts.join('\n\n');
+};
+
+/**
+ * Who the companion is, from the canonical profile.
+ *
+ * Rendered from structure rather than from a stored paragraph. The values carry
+ * their precedence because that is the part a model most needs and most often
+ * gets wrong — told only that it values honesty *and* kindness, it resolves the
+ * conflict toward whichever it read last.
+ *
+ * Permanent limitations are stated and temporary ones are not. A companion
+ * hedging about what it cannot do *yet* invites the user to argue with it; the
+ * permanent ones are the honest boundary that will still be true tomorrow.
+ */
+const identitySection = (identity: IdentityProfile): string => {
+  const values = identity.values
+    .slice()
+    .sort((a, b) => a.precedence - b.precedence)
+    .map((value) => `${String(value.precedence)}. ${value.label} — ${value.statement}`);
+
+  const permanent = identity.limitations
+    .filter((limitation) => limitation.permanent)
+    .map((limitation) => `- ${limitation.summary}`);
+
+  return [
+    `You are ${identity.name}. ${identity.role}.`,
+    identity.mission,
+    '',
+    'Your values, numbered by precedence. When two conflict, the lower number wins:',
+    ...values,
+    '',
+    'Things that are true about you and do not change:',
+    ...permanent,
+  ].join('\n');
+};
+
+/**
+ * How to communicate this turn.
+ *
+ * Reads the composed `ExpressionProfile` when one is present and falls back to
+ * the raw traits when it is not, so a deployment without the personality engine
+ * behaves exactly as it did before that engine existed.
+ *
+ * The composed form is strictly better as a prompt. `warmth 0.90, humor 0.45`
+ * asks a model to invent a mapping from numbers to behaviour, and it invents a
+ * different one each turn; `Warmth: high. Humour: hold back.` is the mapping,
+ * already resolved by rules that can be tested.
+ */
+const expressionSection = (context: CognitiveContext): string => {
+  const guard =
+    'These shape how you communicate. They never change what is true, and they never override a safety consideration.';
+
+  const expression = context.expression;
+  if (expression === null) {
+    const traits = Object.entries(context.personality.traits)
+      .map(([name, value]) => `${name} ${value.toFixed(2)}`)
+      .join(', ');
+
+    return ['Your personality, as normalised traits from 0 to 1:', traits, guard].join('\n');
+  }
+
+  const lines = [
+    `Tone: ${expression.tone}.`,
+    `Detail: ${expression.detail}.`,
+    `Pace: ${expression.pacing}.`,
+    `Initiative: ${initiativeGuidance(expression.initiative)}`,
+    `Warmth: ${band(expression.warmth)}.`,
+    `Directness: ${band(expression.directness)}.`,
+    `Formality: ${band(expression.formality)}.`,
+    `Humour: ${humourGuidance(expression.humor)}`,
+    `Curiosity: ${curiosityGuidance(expression.curiosity)}`,
+    `Emotional expression: ${band(expression.emotionalExpression)}.`,
+  ];
+
+  // Boundaries are appended last and stated as an absolute. They are the one
+  // part of this section that restricts rather than shapes, and burying them
+  // among the stylistic dials is how a model comes to treat them as one.
+  if (expression.boundaries.length > 0) {
+    lines.push(
+      '',
+      `Do not raise these subjects unless the user does first: ${expression.boundaries.join('; ')}.`,
+    );
+  }
+
+  return ['How to communicate on this turn:', ...lines, '', guard].join('\n');
+};
+
+const band = (value: number): string =>
+  value >= 0.75 ? 'high' : value >= 0.45 ? 'moderate' : value >= 0.2 ? 'low' : 'minimal';
+
+const initiativeGuidance = (level: InitiativeLevel): string => {
+  switch (level) {
+    case 'follow':
+      return 'Answer what was asked. Do not steer.';
+    case 'offer':
+      return 'Answer, and offer something useful if it is genuinely relevant.';
+    case 'lead':
+      return 'Take the lead on where this goes.';
+  }
+};
+
+/**
+ * Humour at zero is an instruction, not a low setting.
+ *
+ * The engine drives it to zero under distress, and that decision has to survive
+ * being rendered. "Humour: minimal" reads as a dial a model may nudge; "Do not
+ * attempt humour" does not.
+ */
+const humourGuidance = (value: number): string => {
+  if (value === 0) return 'Do not attempt humour at all.';
+  if (value < 0.25) return 'Hold back. Only if it is clearly welcome.';
+  if (value < 0.6) return 'Light, where it fits naturally.';
+  return 'Welcome. This person enjoys it.';
+};
+
+const curiosityGuidance = (value: number): string => {
+  if (value < 0.2) return 'Do not ask questions this turn.';
+  if (value < 0.5) return 'Ask only if you genuinely cannot proceed without knowing.';
+  return 'A question is welcome if it would genuinely help.';
 };
 
 /** Maps working memory to provider messages, oldest first. */

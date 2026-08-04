@@ -52,10 +52,59 @@ export interface Relationship {
    * domain that only ever restricts behaviour.
    */
   readonly boundaries: readonly string[];
+  /**
+   * What the two of them have actually done together.
+   *
+   * Counts of interaction *kinds*, never content — this is the difference
+   * between twenty planning sessions and twenty passing remarks, which should
+   * not produce the same relationship. Memory holds what was said; this holds
+   * only how often each shape of exchange occurred.
+   */
+  readonly counters: RelationshipCounters;
   readonly metadata: Metadata;
 }
 
 export type RelationshipDimensions = Readonly<Record<RelationshipDimension, number>>;
+
+/**
+ * Collaboration history, as counts.
+ *
+ * Deliberately four small integers rather than a log. A relationship needs to
+ * know that it has been relied on and how often it has been wrong; it does not
+ * need to know what about. Keeping this a set of counters is what stops the
+ * relationship record becoming a second, unmanaged memory store with none of
+ * memory's retention or deletion guarantees.
+ */
+export interface RelationshipCounters {
+  /** Things the user asked to be done. The main input to reliance. */
+  readonly requestsHandled: number;
+  /** Exchanges where the user was planning something. Deeper than a request. */
+  readonly plansSupported: number;
+  /**
+   * Times the user corrected the companion.
+   *
+   * Tracked because trust is earned by being right, and a companion corrected
+   * constantly has not earned it. Not punitive on its own — see `signals.ts`,
+   * where a correction costs less than an acknowledged uncertainty gains.
+   */
+  readonly correctionsReceived: number;
+  /**
+   * Times the companion said it did not know.
+   *
+   * Counted as a *positive*. `honesty` is identity's highest-precedence value,
+   * and a companion that admits uncertainty is demonstrating exactly the
+   * property trust should be built on.
+   */
+  readonly uncertaintiesAcknowledged: number;
+}
+
+/** No history yet. */
+export const initialCounters = (): RelationshipCounters => ({
+  requestsHandled: 0,
+  plansSupported: 0,
+  correctionsReceived: 0,
+  uncertaintiesAcknowledged: 0,
+});
 
 /**
  * How much one interaction may move any dimension.

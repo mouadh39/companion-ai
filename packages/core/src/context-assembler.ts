@@ -6,12 +6,13 @@ import type {
   ConversationTurn,
   DecisionHint,
   EmotionState,
+  ExpressionProfile,
   Goal,
-  Identity,
+  IdentityProfile,
   OmissionReason,
   Perception,
   PersonalityProfile,
-  PlanSnapshot,
+  TaskPlan,
   PortOutcome,
   Relationship,
   RetrievedMemory,
@@ -114,7 +115,7 @@ export interface AssemblyOutcome {
  * importing the assembler that happens to build it — which is what will let
  * Planning declare `dependsOn: [GOALS, WORLD]` from its own package.
  */
-export const IDENTITY = contributorKey<Identity>('identity', 'identity');
+export const IDENTITY = contributorKey<IdentityProfile>('identity', 'identity');
 export const PERSONALITY = contributorKey<PersonalityProfile>('personality', 'personality');
 export const GOALS = contributorKey<readonly Goal[]>('goals', 'goals');
 export const WORKING_MEMORY = contributorKey<readonly ConversationTurn[]>(
@@ -139,7 +140,7 @@ export const RELATIONSHIP = contributorKey<Relationship | null>(
  * allocation would let the two compete — a companion could end up citing the
  * steps of a goal that itself got dropped.
  */
-export const PLAN = contributorKey<PlanSnapshot | null>('plan', 'goals');
+export const PLAN = contributorKey<TaskPlan | null>('plan', 'goals');
 /**
  * The advisor consumes the rest of the context, so it necessarily runs last.
  *
@@ -151,6 +152,17 @@ export const DECISION_HINT = contributorKey<DecisionHint | null>(
   'decision_hint',
   'identity',
 );
+/**
+ * How to communicate this turn.
+ *
+ * Budgeted against `personality`, because it is that section resolved for the
+ * moment rather than an additional one — and giving it an allocation of its own
+ * would let the traits and their resolution compete for room in the prompt.
+ *
+ * Depends on personality and working memory, so it lands in a later wave by
+ * construction rather than by being remembered to go last.
+ */
+export const EXPRESSION = contributorKey<ExpressionProfile>('expression', 'personality');
 
 export class ContextAssembler {
   readonly #ports: ContextPorts;
@@ -232,6 +244,44 @@ export class ContextAssembler {
         required: false,
         budgetMs,
         contribute: (view, options) => plan.current(view.companionId, options),
+      });
+    }
+
+    const expression = ports.expression;
+    if (expression !== undefined) {
+      optional.push({
+        key: EXPRESSION,
+        // Personality is the disposition it resolves; working memory is the
+        // conversation depth it reads. Relationship is added only when that
+        // capability is composed, so the graph never declares an edge to a
+        // contributor that will not run.
+        dependsOn: [
+          PERSONALITY,
+          WORKING_MEMORY,
+          ...(relationship !== undefined ? [RELATIONSHIP] : []),
+        ],
+        required: false,
+        budgetMs,
+        contribute: (view, options) => {
+          const personality = view.get(PERSONALITY);
+          // Personality is a required contributor, so a missing value here means
+          // assembly is already failing and this contribution is moot. Throwing
+          // records it as a port error rather than composing an expression from
+          // a disposition that does not exist.
+          if (personality === undefined) {
+            throw new ContextUnavailableError('personality', 'not_attempted', []);
+          }
+
+          return expression.compose(
+            {
+              personality,
+              perception: view.perception,
+              relationship: view.get(RELATIONSHIP) ?? null,
+              recentTurns: view.get(WORKING_MEMORY) ?? [],
+            },
+            options,
+          );
+        },
       });
     }
 
@@ -370,7 +420,7 @@ export class ContextAssembler {
       );
     }
 
-    const identity = run.values.get(IDENTITY.id) as Identity;
+    const identity = run.values.get(IDENTITY.id) as IdentityProfile;
     const personality = run.values.get(PERSONALITY.id) as PersonalityProfile;
     const goals = (run.values.get(GOALS.id) as readonly Goal[] | undefined) ?? [];
     const workingTurns =
@@ -382,8 +432,10 @@ export class ContextAssembler {
     const emotion = (run.values.get(EMOTION.id) as EmotionState | null | undefined) ?? null;
     const relationship =
       (run.values.get(RELATIONSHIP.id) as Relationship | null | undefined) ?? null;
-    const plan = (run.values.get(PLAN.id) as PlanSnapshot | null | undefined) ?? null;
+    const plan = (run.values.get(PLAN.id) as TaskPlan | null | undefined) ?? null;
     const hint = (run.values.get(DECISION_HINT.id) as DecisionHint | null | undefined) ?? null;
+    const expression =
+      (run.values.get(EXPRESSION.id) as ExpressionProfile | undefined) ?? null;
 
     const omissions: SectionOmission[] = [];
     const spent: Partial<Record<ContextSection, number>> = {};
@@ -392,7 +444,18 @@ export class ContextAssembler {
     const limitFor = (section: ContextSection): number =>
       budgetTemplate.sectionLimits[section] ?? 0;
 
-    spent.identity = this.#estimate(identity.selfDescription + identity.coreValues.join(' '));
+    // Estimated over the text that actually reaches the prompt — the profile's
+    // headline fields and its value statements — not the whole record. Most of
+    // an `IdentityProfile` (uncertainty bands, boundary reasons, invariants)
+    // informs behaviour without ever being rendered.
+    spent.identity = this.#estimate(
+      [
+        identity.name,
+        identity.role,
+        identity.mission,
+        ...identity.values.map((value) => value.statement),
+      ].join(' '),
+    );
     spent.personality = 60; // Fixed-shape numeric block; not text-dependent.
 
     const failureOf = (key: ContributorKey<unknown>): OmissionReason | null =>
@@ -516,6 +579,10 @@ export class ContextAssembler {
       world,
       plan,
       hint,
+      // Null when no expression capability is composed in. Not a degradation:
+      // generation reads the raw traits instead, exactly as it did before the
+      // personality engine existed.
+      expression,
       budget,
     };
 

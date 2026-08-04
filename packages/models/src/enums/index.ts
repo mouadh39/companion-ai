@@ -59,8 +59,8 @@ export {
   requiresConfirmation,
 } from './tool.js';
 
-export type { PlanStepStatus } from './plan.js';
-export { PLAN_STEP_STATUSES, isSettledStep } from './plan.js';
+export type { TaskStepStatus } from './plan.js';
+export { TASK_STEP_STATUSES, isSettledStep } from './plan.js';
 
 export type { WorldObjectType, SpaceType, ObservationState } from './world.js';
 export { WORLD_OBJECT_TYPES, SPACE_TYPES, OBSERVATION_STATES, isPresent } from './world.js';

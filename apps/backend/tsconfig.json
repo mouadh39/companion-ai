@@ -11,6 +11,8 @@
     { "path": "../../packages/events" },
     { "path": "../../packages/actions" },
     { "path": "../../packages/core" },
+    { "path": "../../packages/identity" },
+    { "path": "../../packages/personality" },
     { "path": "../../packages/providers" }
   ]
 }

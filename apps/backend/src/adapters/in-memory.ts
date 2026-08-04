@@ -2,7 +2,6 @@ import type { CompanionId } from '@nexa/shared';
 import type {
   ConversationTurn,
   Goal,
-  Identity,
   MemoryCandidate,
   PersonalityProfile,
   RetrievedMemory,
@@ -11,7 +10,6 @@ import type {
 import { defaultPersonality } from '@nexa/models';
 import type {
   GoalPort,
-  IdentityPort,
   MemoryRetrievalPort,
   MemoryWritePort,
   PersonalityPort,
@@ -32,25 +30,6 @@ import type {
  * An interface designed against imagined callers is wrong in ways that only
  * appear when a real caller arrives.
  */
-
-export class StaticIdentity implements IdentityPort {
-  readonly #identity: Identity;
-
-  constructor(identity?: Partial<Identity>) {
-    this.#identity = {
-      name: 'Nexa',
-      coreValues: ['honesty', 'respect', 'curiosity', 'reliability'],
-      selfDescription:
-        'You are a companion who shares the user\'s real environment. You remember what you have been through together, you are direct without being cold, and you would rather say you do not know than invent an answer.',
-      version: 1,
-      ...identity,
-    };
-  }
-
-  async load(): Promise<Identity> {
-    return this.#identity;
-  }
-}
 
 /**
  * Personality held in memory, per companion.

@@ -12,6 +12,7 @@ import {
   type IdempotencyStore,
   type LanguageModelPort,
   type Observability,
+  type PerceptionPort,
   type TurnGate,
   type TurnResult,
 } from '@nexa/core';
@@ -22,6 +23,7 @@ import {
 } from '@nexa/providers';
 import type { AppConfig } from './config.js';
 import { HeuristicPerception } from './adapters/perception.js';
+import { IdentityEngine, PersonalityExpression } from './adapters/engines.js';
 import {
   EmptyMemoryRetrieval,
   InMemoryPersonality,
@@ -29,7 +31,6 @@ import {
   NoGoals,
   NoTools,
   RecordingMemoryWrite,
-  StaticIdentity,
 } from './adapters/in-memory.js';
 
 /**
@@ -72,6 +73,16 @@ export interface CompositionOverrides {
   readonly clock?: Clock;
   readonly languageModel?: LanguageModelPort;
   readonly observability?: Observability;
+  /**
+   * Substitutes perception.
+   *
+   * A test seam, like the clock and the model. It exists because the shipped
+   * `HeuristicPerception` reports every emotional read at a confidence just
+   * below the actionable floor, so the paths that depend on a *confident*
+   * reading — which is most of the personality engine — are unreachable through
+   * the default wiring and could not otherwise be exercised end to end.
+   */
+  readonly perception?: PerceptionPort;
 }
 
 const selectLanguageModel = (
@@ -123,7 +134,12 @@ export const compose = (
   const memoryWrite = new RecordingMemoryWrite();
 
   const contextPorts: ContextPorts = {
-    identity: new StaticIdentity(),
+    // Phase 2 engines, behind the ports Core declares. These are the first two
+    // adapters here that are not placeholder wiring — each delegates to a real,
+    // separately tested package rather than returning a literal.
+    identity: new IdentityEngine(),
+    expression: new PersonalityExpression(),
+
     personality: new InMemoryPersonality(),
     workingMemory,
     memoryRetrieval: new EmptyMemoryRetrieval(),
@@ -144,7 +160,7 @@ export const compose = (
 
   // ── core ──────────────────────────────────────────────────────────────────
   const turn = new CognitiveTurn({
-    perception: new HeuristicPerception(),
+    perception: overrides.perception ?? new HeuristicPerception(),
     assembler: new ContextAssembler(contextPorts, clock),
     generator: new ActionGenerator({ model: languageModel }),
     workingMemory,

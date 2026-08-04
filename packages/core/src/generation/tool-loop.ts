@@ -366,11 +366,24 @@ const finish = (
   return done(actions, null, toolCallCount);
 };
 
-/** Chooses a delivery tone from the decision and the user's estimated state. */
+/**
+ * Chooses a delivery tone.
+ *
+ * Defers to the composed `ExpressionProfile` when one is present. That profile
+ * resolved tone from personality, relationship and the moment together, and
+ * recorded why — re-deriving it here from two of those inputs would be a second
+ * answer to a question already settled, and the two would drift.
+ *
+ * The heuristic below remains as the fallback for a deployment with no
+ * expression capability composed in. It is deliberately the narrower rule: it
+ * sees perception and warmth, and nothing else.
+ */
 export const toneFor = (
   context: CognitiveContext,
   decision: Decision,
 ): SpeakAction['tone'] => {
+  if (context.expression !== null) return context.expression.tone;
+
   const emotion = context.perception.emotion;
 
   // A low-confidence emotional read is not acted on. Treating a weak signal as

@@ -7,16 +7,16 @@
  * can raise unprompted. Collapsing them hides exactly the case worth surfacing —
  * the same reason `Goal` keeps `status` and `progress` apart.
  */
-export type PlanStepStatus = 'pending' | 'active' | 'done' | 'blocked' | 'skipped';
+export type TaskStepStatus = 'pending' | 'active' | 'done' | 'blocked' | 'skipped';
 
-export const PLAN_STEP_STATUSES = [
+export const TASK_STEP_STATUSES = [
   'pending',
   'active',
   'done',
   'blocked',
   'skipped',
-] as const satisfies readonly PlanStepStatus[];
+] as const satisfies readonly TaskStepStatus[];
 
 /** True when the step needs nothing further. */
-export const isSettledStep = (status: PlanStepStatus): boolean =>
+export const isSettledStep = (status: TaskStepStatus): boolean =>
   status === 'done' || status === 'skipped';

@@ -19,6 +19,7 @@ import type {
 } from '@nexa/models';
 import { trustExternalId } from '@nexa/shared';
 import type { CompanionId, MemoryId, TurnId, UserId } from '@nexa/shared';
+import { testIdentity } from './fixtures.js';
 
 /**
  * Deliberation is a pure function, and these tests exist to hold it that way.
@@ -49,12 +50,8 @@ const context = (overrides: {
     userId: trustExternalId<UserId>('user-1'),
     at: timestamp('2026-07-29T12:00:00.000Z'),
     perception,
-    identity: {
-      name: 'Nexa',
-      coreValues: ['honesty'],
-      selfDescription: 'A companion.',
-      version: 1,
-    },
+    identity: testIdentity(),
+    expression: null,
     personality: defaultPersonality(),
     workingMemory: [],
     retrievedMemories: overrides.memories ?? [],
@@ -74,8 +71,12 @@ const memory = (score: number): RetrievedMemory => ({
     id: trustExternalId<MemoryId>('mem-1'),
     userId: trustExternalId<UserId>('user-1'),
     type: 'semantic',
+    subject: 'project',
     content: 'The user is building an AR companion in Unity.',
     createdAt: timestamp('2026-07-01T00:00:00.000Z'),
+    expiresAt: null,
+    reinforcementCount: 0,
+    lastReinforcedAt: null,
     importance: importance(0.8),
     confidence: confidence(0.9),
     valence: valence(0.2),

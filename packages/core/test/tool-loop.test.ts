@@ -14,6 +14,7 @@ import { confidence, defaultPersonality, duration, timestamp } from '@nexa/model
 import type { CognitiveContext, Decision, Tool } from '@nexa/models';
 import { FixedClock, ok, systemClock, trustExternalId } from '@nexa/shared';
 import type { CompanionId, DecisionId, ToolId, TurnId, UserId } from '@nexa/shared';
+import { testIdentity } from './fixtures.js';
 
 /**
  * The bounded tool loop.
@@ -113,7 +114,8 @@ const context: CognitiveContext = {
     entities: [],
     emotion: null,
   },
-  identity: { name: 'Nexa', coreValues: [], selfDescription: 'A companion.', version: 1 },
+  identity: testIdentity(),
+  expression: null,
   personality: defaultPersonality(),
   workingMemory: [],
   retrievedMemories: [],

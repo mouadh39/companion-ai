@@ -1,24 +1,17 @@
 /**
- * Who the companion is.
+ * The part of the companion that is *allowed* to evolve.
  *
- * Split into two types on purpose. `Identity` is the part that must survive
- * every model upgrade and every personality drift — if this changes, it is a
- * different companion. `PersonalityProfile` is the part that is *allowed* to
- * evolve, slowly, through experience.
- *
- * Keeping them apart is what makes "the language model is replaceable"
+ * Who it is — name, values, commitments, limitations — is `IdentityProfile`,
+ * next door. That split is what makes "the language model is replaceable"
  * enforceable rather than aspirational: swapping providers cannot touch either,
  * because neither lives in a prompt.
+ *
+ * A narrow four-field `Identity` used to live here as the shape the turn
+ * carried. `IdentityProfile` superseded it — the prompt is built from values,
+ * commitments and limitations, and the summary would have had to grow whatever
+ * the prompt needed next until it was a second, drifting definition of who the
+ * companion is.
  */
-export interface Identity {
-  readonly name: string;
-  /** Immutable values. Referenced when a decision has an ethical dimension. */
-  readonly coreValues: readonly string[];
-  /** One paragraph the companion would use to describe itself. */
-  readonly selfDescription: string;
-  /** Bumped when core identity is deliberately revised. Never silently. */
-  readonly version: number;
-}
 
 /**
  * A personality trait, normalised to 0–1.
@@ -34,7 +27,9 @@ export type TraitName =
   | 'confidence'
   | 'playfulness'
   | 'warmth'
-  | 'creativity';
+  | 'creativity'
+  | 'formality'
+  | 'directness';
 
 export const TRAIT_NAMES = [
   'curiosity',
@@ -45,6 +40,8 @@ export const TRAIT_NAMES = [
   'playfulness',
   'warmth',
   'creativity',
+  'formality',
+  'directness',
 ] as const satisfies readonly TraitName[];
 
 /**
@@ -65,6 +62,12 @@ export type TraitScores = Readonly<Record<TraitName, number>>;
  * Traits move over months. These move within a conversation, and they decay
  * back toward baseline — a companion that stays stuck in one mood reads as
  * broken rather than as alive.
+ *
+ * `energy` lives here rather than alongside the traits, and that placement is
+ * the whole distinction: how energetic the companion *is right now* is state,
+ * while how warm or direct it *tends to be* is disposition. A duplicate
+ * `energy` trait would give two sources of truth for one quantity, and the
+ * layer that read the stale one would be wrong in a way nothing detects.
  */
 export interface AdaptiveState {
   readonly energy: number;
@@ -99,6 +102,12 @@ export const isValidPersonality = (profile: PersonalityProfile): boolean => {
  * earn the right to joke with someone rather than assume it. Those are the
  * traits most likely to move first, and moving upward reads as a relationship
  * developing.
+ *
+ * `formality` starts slightly above the midpoint for the same reason. Being too
+ * casual with a stranger is harder to recover from than being a little stiff,
+ * and relaxing over time reads as familiarity being earned. `directness` starts
+ * mid: a companion that hedges everything is useless, one that is blunt from the
+ * first message is abrasive.
  */
 export const defaultPersonality = (): PersonalityProfile => ({
   traits: {
@@ -110,6 +119,8 @@ export const defaultPersonality = (): PersonalityProfile => ({
     playfulness: 0.35,
     warmth: 0.9,
     creativity: 0.7,
+    formality: 0.55,
+    directness: 0.5,
   },
   adaptive: { energy: 0.6, focus: 0.7, engagement: 0.5 },
   revision: 0,

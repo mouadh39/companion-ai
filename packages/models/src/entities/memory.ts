@@ -1,5 +1,6 @@
 import type { MemoryId, UserId } from '@nexa/shared';
 import type { MemorySource, MemoryType } from '../enums/memory.js';
+import type { MemorySubject } from './memory-formation.js';
 import type { ConfidenceScore, ImportanceScore, Valence } from '../value-objects/score.js';
 import type { Timestamp } from '../value-objects/timestamp.js';
 import type { EmbeddingReference } from '../value-objects/embedding-reference.js';
@@ -25,6 +26,13 @@ export interface Memory {
    */
   readonly userId: UserId;
   readonly type: MemoryType;
+  /**
+   * What the memory is about.
+   *
+   * Orthogonal to `type`: the type decides how it is retrieved, the subject
+   * decides how long it lives and how much it matters. See `MemorySubject`.
+   */
+  readonly subject: MemorySubject;
   /** The memory in natural language. What actually enters a prompt. */
   readonly content: string;
   /** When the memory was formed, not when it was last read. */
@@ -36,6 +44,25 @@ export interface Memory {
   /** Emotional charge. Salience, not sentiment analysis. */
   readonly valence: Valence;
   readonly source: MemorySource;
+  /**
+   * When this stops being current, or null when it never does.
+   *
+   * Set from the subject's retention policy at formation and extended by
+   * reinforcement. An expired memory is not deleted — expiry is a reason to
+   * stop *retrieving* it, and `18_Memory_Architecture.md` makes deletion the
+   * user's decision rather than a side effect of time passing.
+   */
+  readonly expiresAt: Timestamp | null;
+  /**
+   * How many times this has been independently re-observed.
+   *
+   * The counter that separates something the user mentioned once from
+   * something they have said five times. Reinforcement raises confidence and
+   * pushes expiry out, which is how a memory earns permanence rather than
+   * being granted it.
+   */
+  readonly reinforcementCount: number;
+  readonly lastReinforcedAt: Timestamp | null;
   readonly tags: readonly string[];
   /** Ids of memories this one connects to. The knowledge graph's edges. */
   readonly relatedTo: readonly MemoryId[];
@@ -61,7 +88,7 @@ export interface RetrievedMemory {
   readonly memory: Memory;
   /** Combined relevance. */
   readonly score: ConfidenceScore;
-  readonly signals: RetrievalSignals;
+  readonly signals: RankingSignals;
 }
 
 /**
@@ -71,7 +98,7 @@ export interface RetrievedMemory {
  * stated in `docs/memory/18_Memory_Architecture.md` and one that only holds if
  * the parts stay visible.
  */
-export interface RetrievalSignals {
+export interface RankingSignals {
   readonly semantic: number;
   readonly recency: number;
   readonly importance: number;

@@ -14,6 +14,7 @@ import type {
 } from '@nexa/models';
 import { FixedClock, trustExternalId } from '@nexa/shared';
 import type { CompanionId, DecisionId, TurnId, UserId } from '@nexa/shared';
+import { testIdentity } from './fixtures.js';
 
 /**
  * The record is the turn's audit artifact, and these tests hold the one
@@ -43,12 +44,8 @@ const contextWith = (budget: ContextBudget): CognitiveContext => ({
   userId,
   at: timestamp('2026-07-30T12:00:00.000Z'),
   perception,
-  identity: {
-    name: 'Nexa',
-    selfDescription: 'a companion',
-    coreValues: ['honesty'],
-    version: 1,
-  },
+  identity: testIdentity(),
+  expression: null,
   personality: defaultPersonality(),
   workingMemory: [],
   retrievedMemories: [],

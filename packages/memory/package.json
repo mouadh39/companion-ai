@@ -1,0 +1,27 @@
+{
+  "name": "@nexa/memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test": "vitest run --passWithNoTests",
+    "clean": "node ../../scripts/clean.mjs",
+    "lint": "eslint src test --no-error-on-unmatched-pattern --max-warnings 0"
+  },
+  "dependencies": {
+    "@nexa/models": "workspace:*"
+  }
+}

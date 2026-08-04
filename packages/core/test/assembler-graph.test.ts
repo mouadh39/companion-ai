@@ -17,6 +17,7 @@ import { confidence, defaultPersonality, isDegraded, timestamp } from '@nexa/mod
 import type { WorldSnapshot } from '@nexa/models';
 import { FixedClock, systemClock, trustExternalId } from '@nexa/shared';
 import type { CompanionId, TurnId, UserId } from '@nexa/shared';
+import { testIdentity } from './fixtures.js';
 
 /**
  * The shape of the *production* contributor graph.
@@ -33,12 +34,7 @@ const userId = trustExternalId<UserId>('user-1');
 
 const ports: ContextPorts = {
   identity: {
-    load: async () => ({
-      name: 'Nexa',
-      selfDescription: 'a companion',
-      coreValues: ['honesty'],
-      version: 1,
-    }),
+    load: async () => testIdentity(),
   },
   personality: { load: async () => defaultPersonality() },
   workingMemory: { recent: async () => [], append: async () => undefined },
@@ -113,7 +109,7 @@ describe('the assembler’s declared graph', () => {
   it('still produces a usable context through the graph', async () => {
     const { context, portCalls } = await assemble();
 
-    expect(context.identity.name).toBe('Nexa');
+    expect(context.identity.name).toBe('Test Companion');
     expect(context.turnId).toBe(turnId);
     // One call per contributor, so the record can attribute assembly latency.
     expect(portCalls).toHaveLength(6);

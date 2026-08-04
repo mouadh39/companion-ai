@@ -81,6 +81,8 @@ export type {
   ToolExecutionRequest,
   TokenEstimatorPort,
   ContextPorts,
+  ExpressionPort,
+  ExpressionRequest,
   WorldQuery,
   WorldPort,
   EmotionPort,
@@ -109,6 +111,7 @@ export {
   RELATIONSHIP,
   PLAN,
   DECISION_HINT,
+  EXPRESSION,
 } from './context-assembler.js';
 
 export { TurnRecordBuilder } from './turn-record.js';

@@ -38,9 +38,15 @@ importers:
       '@nexa/events':
         specifier: workspace:*
         version: link:../../packages/events
+      '@nexa/identity':
+        specifier: workspace:*
+        version: link:../../packages/identity
       '@nexa/models':
         specifier: workspace:*
         version: link:../../packages/models
+      '@nexa/personality':
+        specifier: workspace:*
+        version: link:../../packages/personality
       '@nexa/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -84,11 +90,48 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/identity:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+
+  packages/memory:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+
   packages/models:
     dependencies:
       '@nexa/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/perception:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+
+  packages/personality:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+
+  packages/planning:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+      '@nexa/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@nexa/perception':
+        specifier: workspace:*
+        version: link:../perception
 
   packages/providers:
     dependencies:
@@ -101,6 +144,31 @@ importers:
       '@nexa/models':
         specifier: workspace:*
         version: link:../models
+      '@nexa/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/reflection:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+      '@nexa/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/relationship:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+
+  packages/retrieval:
+    dependencies:
+      '@nexa/models':
+        specifier: workspace:*
+        version: link:../models
+    devDependencies:
       '@nexa/shared':
         specifier: workspace:*
         version: link:../shared

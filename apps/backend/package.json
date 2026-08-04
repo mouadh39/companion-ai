@@ -14,12 +14,14 @@
     "lint": "eslint src test --no-error-on-unmatched-pattern --max-warnings 0"
   },
   "dependencies": {
-    "@nexa/shared": "workspace:*",
-    "@nexa/models": "workspace:*",
-    "@nexa/events": "workspace:*",
     "@nexa/actions": "workspace:*",
     "@nexa/core": "workspace:*",
+    "@nexa/events": "workspace:*",
+    "@nexa/identity": "workspace:*",
+    "@nexa/models": "workspace:*",
+    "@nexa/personality": "workspace:*",
     "@nexa/providers": "workspace:*",
+    "@nexa/shared": "workspace:*",
     "fastify": "^5.2.0"
   }
 }

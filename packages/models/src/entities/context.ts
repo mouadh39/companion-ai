@@ -1,5 +1,7 @@
 import type { CompanionId, TurnId, UserId } from '@nexa/shared';
-import type { Identity, PersonalityProfile } from './identity.js';
+import type { PersonalityProfile } from './identity.js';
+import type { IdentityProfile } from './identity-profile.js';
+import type { ExpressionProfile } from './expression.js';
 import type { Perception } from './perception.js';
 import type { RetrievedMemory } from './memory.js';
 import type { Goal } from './goal.js';
@@ -7,7 +9,7 @@ import type { Tool } from './tool.js';
 import type { EmotionState } from './emotion.js';
 import type { Relationship } from './relationship.js';
 import type { WorldSnapshot } from './world-snapshot.js';
-import type { PlanSnapshot } from './plan.js';
+import type { TaskPlan } from './plan.js';
 import type { DecisionHint } from './decision.js';
 import type { MessageRole } from '../enums/conversation.js';
 import type { Timestamp } from '../value-objects/timestamp.js';
@@ -176,8 +178,35 @@ export interface CognitiveContext {
   readonly at: Timestamp;
 
   readonly perception: Perception;
-  readonly identity: Identity;
+  /**
+   * The canonical self-definition, in full.
+   *
+   * The whole profile rather than a four-field summary, because the prompt is
+   * built from its values, commitments and limitations — and a summary would
+   * have to grow whatever the prompt needed next until it was a second, drifting
+   * definition of who the companion is.
+   *
+   * It is a frozen singleton, so carrying it costs one reference. `version` is
+   * what a replay resolves against.
+   */
+  readonly identity: IdentityProfile;
   readonly personality: PersonalityProfile;
+
+  /**
+   * How to communicate this turn, composed from personality, relationship and
+   * the moment.
+   *
+   * Null when no expression capability is composed in — which is *not* a
+   * degradation, for the same reason an absent world model is not. Generation
+   * falls back to reading the raw traits, which is what it did before the
+   * personality engine existed.
+   *
+   * Present on the context rather than computed inside generation so that the
+   * composition is *recorded*. A replayed turn re-reads this value instead of
+   * recomposing it, which is what keeps the answer reproducible when the
+   * engine's rules are later tuned.
+   */
+  readonly expression: ExpressionProfile | null;
   readonly workingMemory: readonly ConversationTurn[];
   readonly retrievedMemories: readonly RetrievedMemory[];
 
@@ -216,7 +245,7 @@ export interface CognitiveContext {
    * conversational path. Null when nothing is being planned or no planning
    * capability is composed in.
    */
-  readonly plan: PlanSnapshot | null;
+  readonly plan: TaskPlan | null;
 
   /**
    * An advisory opinion formed during assembly, for deliberation to consult.
