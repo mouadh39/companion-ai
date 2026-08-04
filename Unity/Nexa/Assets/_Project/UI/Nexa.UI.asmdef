@@ -1,0 +1,19 @@
+{
+    "name": "Nexa.UI",
+    "rootNamespace": "Nexa.UI",
+    "references": [
+        "Nexa.Core",
+        "Nexa.Data",
+        "Unity.TextMeshPro",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -1,0 +1,23 @@
+{
+    "name": "Nexa.App",
+    "rootNamespace": "Nexa.App",
+    "references": [
+        "Nexa.Core",
+        "Nexa.Data",
+        "Nexa.Character",
+        "Nexa.AR",
+        "Nexa.Input",
+        "Nexa.UI",
+        "Unity.XR.ARFoundation",
+        "Unity.XR.CoreUtils"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

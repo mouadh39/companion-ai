@@ -1,0 +1,6 @@
+# The Unity project at Unity/Nexa is deliberately NOT a workspace member.
+# A Unity project inside a workspace glob makes package managers walk Library/,
+# which is tens of thousands of generated files.
+packages:
+  - 'packages/*'
+  - 'apps/backend'

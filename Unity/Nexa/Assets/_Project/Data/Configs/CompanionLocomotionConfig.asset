@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0bb23ab954bcc3a4e9ca502e96952985, type: 3}
+  m_Name: CompanionLocomotionConfig
+  m_EditorClassIdentifier: Nexa.Data::Nexa.Data.Companion.CompanionLocomotionConfig
+  _moveSpeed: 0.7
+  _acceleration: 3
+  _arrivalTolerance: 0.08
+  _angularSpeed: 320
+  _turnInPlaceAngle: 70
+  _groundSettleSpeed: 4
+  _maxSlopeAngle: 25
