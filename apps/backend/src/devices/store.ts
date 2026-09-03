@@ -69,12 +69,25 @@ export interface DeviceStore {
 export type DeviceIdSource = () => DeviceId;
 
 /**
+ * The internal superset a stored row actually carries. `DeviceRecord` stays
+ * exactly as documented above — nothing that reads it publicly gains access
+ * to key material — but the row behind it must hold a headset's key
+ * somewhere, or `headsetKeyOf` below has nothing to read. Mirrors how
+ * `pairing-sessions.ts`'s internal `SessionRow` already carries more fields
+ * than any single public return type exposes.
+ */
+interface InternalDeviceRow extends DeviceRecord {
+  readonly publicKey: Buffer | null;
+  readonly publicKeyId: string | null;
+}
+
+/**
  * Devices held in memory.
  *
  * What a deployment without a database gets, and what the offline suites use.
  */
 export class InMemoryDeviceStore implements DeviceStore {
-  readonly #rows = new Map<string, DeviceRecord>();
+  readonly #rows = new Map<string, InternalDeviceRow>();
   readonly #newId: DeviceIdSource;
   readonly #now: () => Date;
 
@@ -84,13 +97,15 @@ export class InMemoryDeviceStore implements DeviceStore {
   }
 
   async registerPhone(input: RegisterPhone): Promise<DeviceRecord> {
-    const row: DeviceRecord = {
+    const row: InternalDeviceRow = {
       id: this.#newId(),
       userId: input.userId,
       kind: 'phone',
       label: input.label,
       registeredAt: this.#now(),
       revokedAt: null,
+      publicKey: null,
+      publicKeyId: null,
     };
     this.#rows.set(row.id, row);
     return row;
@@ -131,8 +146,28 @@ export class InMemoryDeviceStore implements DeviceStore {
       label: null,
       registeredAt: this.#now(),
       revokedAt: null,
+      publicKey: input.publicKey,
+      publicKeyId: input.publicKeyId,
     });
     return id;
+  }
+
+  /**
+   * Reads a headset's key material for refresh-proof verification.
+   *
+   * Not part of `DeviceStore`. `DeviceRecord`/`find()` deliberately carry no
+   * key material, so `InMemoryDeviceTokenStore.refresh` — the one caller
+   * that must verify a signature against this key — reads the internal
+   * superset directly instead, the same way `PgDeviceTokenStore.refresh`
+   * joins `devices` for `public_key`/`public_key_id` rather than going
+   * through this store's own public interface.
+   */
+  headsetKeyOf(
+    deviceId: string,
+  ): { readonly publicKey: Buffer; readonly publicKeyId: string; readonly revokedAt: Date | null } | null {
+    const row = this.#rows.get(deviceId);
+    if (row === undefined || row.publicKey === null || row.publicKeyId === null) return null;
+    return { publicKey: row.publicKey, publicKeyId: row.publicKeyId, revokedAt: row.revokedAt };
   }
 }
 

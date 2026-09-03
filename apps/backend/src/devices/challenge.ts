@@ -78,6 +78,61 @@ export const buildChallenge = (input: ChallengeInput): Buffer =>
     )
     .digest();
 
+/**
+ * The proof a headset makes on every refresh: that it still holds the same
+ * private key bound to it at redemption, not merely that it holds the
+ * current refresh token.
+ *
+ * ## Why the refresh token itself is bound into the challenge
+ *
+ * `refreshToken` is not there for its own sake — it is what makes this
+ * challenge replay-proof with no separate nonce or nonce table. A refresh
+ * token is already required to be single-use (rotated on every successful
+ * refresh; see `PgDeviceTokenStore.refresh`), so a signature over a digest
+ * that includes it can be valid for at most one refresh, ever: the moment
+ * that refresh succeeds, the exact token value this signature was computed
+ * against can never be presented again. A captured `(refreshToken,
+ * signature)` pair is therefore useless after its one legitimate use, the
+ * same guarantee a server-issued nonce would buy, obtained here from a
+ * property the design already needed for an unrelated reason.
+ *
+ * Same length-prefixed, domain-separated construction as
+ * {@link buildChallenge} — a different domain tag, so a signature computed
+ * for one can never be mistaken for the other, and the same
+ * {@link ChallengeVerdict} contract for verifying it.
+ *
+ * ```
+ * digest = SHA-256(
+ *   len(domainTag)          ++ domainTag           ++
+ *   len(deviceId)            ++ deviceId             ++
+ *   len(refreshToken)        ++ refreshToken          ++
+ *   len(headsetPublicKeyId)  ++ headsetPublicKeyId
+ * )
+ * ```
+ */
+export const REFRESH_CHALLENGE_DOMAIN_TAG = 'nexa-refresh-v1';
+
+export interface RefreshChallengeInput {
+  /** From the resolved `device_tokens`/`devices` row. Never client-supplied. */
+  readonly deviceId: string;
+  /** The plaintext refresh token exactly as the headset sent it. */
+  readonly refreshToken: string;
+  /** From `devices.public_key_id`. Never client-supplied. */
+  readonly headsetPublicKeyId: string;
+}
+
+export const buildRefreshChallenge = (input: RefreshChallengeInput): Buffer =>
+  createHash('sha256')
+    .update(
+      Buffer.concat([
+        lengthPrefixed(REFRESH_CHALLENGE_DOMAIN_TAG),
+        lengthPrefixed(input.deviceId),
+        lengthPrefixed(input.refreshToken),
+        lengthPrefixed(input.headsetPublicKeyId),
+      ]),
+    )
+    .digest();
+
 export type ChallengeVerdict = 'valid' | 'invalid';
 
 /**

@@ -36,6 +36,7 @@ const config: AppConfig = {
   embeddingModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   supabaseJwtSecret: JWT_SECRET,
+  deviceTokenSecret: null,
 };
 
 const ALICE = trustExternalId<UserId>('alice-uuid');

@@ -37,6 +37,7 @@ const config: AppConfig = {
   embeddingModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   supabaseJwtSecret: 'test-secret-not-used-anywhere-real-0123456789abcdef',
+  deviceTokenSecret: null,
 };
 
 /** A fresh, real P-256 SPKI, base64-encoded exactly as a headset would send it. */

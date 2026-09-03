@@ -9,6 +9,7 @@ import type { AppConfig } from '../dist/config.js';
 import { InMemoryDeviceStore } from '../dist/devices/store.js';
 import { InMemoryEnrolmentStore } from '../dist/devices/enrolments.js';
 import { InMemoryPairingSessionStore } from '../dist/devices/pairing-sessions.js';
+import { InMemoryDeviceTokenStore } from '../dist/devices/tokens.js';
 import { parseP256Spki } from '../dist/devices/spki.js';
 import { buildChallenge } from '../dist/devices/challenge.js';
 import { InMemoryCompanionBindings, type CompanionBindingStore } from '../dist/auth/bindings.js';
@@ -27,6 +28,7 @@ import type { CompositionOverrides } from '../dist/composition.js';
  */
 
 const JWT_SECRET = 'test-secret-not-used-anywhere-real-0123456789abcdef';
+const DEVICE_TOKEN_SECRET = 'test-device-token-secret-not-used-anywhere-real-0123456789abcdef';
 
 const config: AppConfig = {
   host: '127.0.0.1',
@@ -42,6 +44,7 @@ const config: AppConfig = {
   embeddingModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   supabaseJwtSecret: JWT_SECRET,
+  deviceTokenSecret: DEVICE_TOKEN_SECRET,
 };
 
 const ALICE = trustExternalId<UserId>('alice-uuid');
@@ -80,6 +83,13 @@ interface ErrorResponseBody {
 }
 
 const json = <T>(response: { json(): unknown }): T => response.json() as T;
+
+/** Reads a JWT's payload without verifying it — good enough for asserting claims in a test. */
+const decodeJwtPayload = (token: string): Record<string, unknown> => {
+  const [, payload] = token.split('.');
+  if (payload === undefined) throw new Error('not a JWT');
+  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
+};
 
 /**
  * A full harness: a real device store and a real enrolment store sharing one
@@ -147,6 +157,10 @@ const redeem = (server: ReturnType<typeof buildServer>, payload: Record<string, 
 
 interface RedeemResponseBody {
   readonly paired: boolean;
+  readonly deviceId: string;
+  readonly accessToken: string;
+  readonly refreshToken: string;
+  readonly expiresIn: number;
 }
 
 /** A fresh EC P-256 keypair, plus its SPKI exactly as a headset would submit it. */
@@ -577,7 +591,12 @@ describe('redeeming a session with a genuine proof of possession', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(json<RedeemResponseBody>(response).paired).toBe(true);
+    const body = json<RedeemResponseBody>(response);
+    expect(body.paired).toBe(true);
+    expect(typeof body.deviceId).toBe('string');
+    expect(typeof body.accessToken).toBe('string');
+    expect(typeof body.refreshToken).toBe('string');
+    expect(body.expiresIn).toBeGreaterThan(0);
   });
 
   it("registers the headset as a device belonging to the session's account", async () => {
@@ -585,11 +604,6 @@ describe('redeeming a session with a genuine proof of possession', () => {
     const server = buildServer(app, config);
     const fixture = await livePairingSession(server, ALICE);
 
-    // Calling the store directly for this one assertion: the HTTP response
-    // deliberately carries no deviceId (nothing this step gives the headset
-    // a credential to use one with), so confirming exactly which device was
-    // created means reading the real store's real return value rather than
-    // guessing an id.
     const result = await app.pairingSessions.redeem({
       secret: fixture.secret,
       signature: fixture.correctSignature(),
@@ -598,11 +612,26 @@ describe('redeeming a session with a genuine proof of possession', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    const headset = await devices.find(ALICE, result.deviceId);
+    const headset = await devices.find(ALICE, result.redeemed.deviceId);
     expect(headset).not.toBeNull();
     expect(headset?.kind).toBe('headset');
     expect(headset?.userId).toBe(ALICE);
     expect(headset?.id).not.toBe(fixture.phoneDeviceId);
+  });
+
+  it('the returned access token authenticates as the session\'s account on the nexa-device audience', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server, ALICE);
+
+    const response = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+    const body = json<RedeemResponseBody>(response);
+
+    const claims = decodeJwtPayload(body.accessToken);
+    expect(claims.sub).toBe(ALICE);
+    expect(claims.aud).toBe('nexa-device');
   });
 });
 
@@ -621,8 +650,17 @@ describe('a code that cannot be redeemed', () => {
     let now = new Date('2026-09-03T00:00:00.000Z');
     const devices = new InMemoryDeviceStore();
     const enrolments = new InMemoryEnrolmentStore();
-    const pairingSessions = new InMemoryPairingSessionStore(enrolments, devices, undefined, undefined, () => now);
-    const { server } = harness({ devices, enrolments, pairingSessions });
+    const deviceTokens = new InMemoryDeviceTokenStore(devices, DEVICE_TOKEN_SECRET, () => now);
+    const pairingSessions = new InMemoryPairingSessionStore(
+      enrolments,
+      devices,
+      deviceTokens,
+      DEVICE_TOKEN_SECRET,
+      undefined,
+      undefined,
+      () => now,
+    );
+    const { server } = harness({ devices, enrolments, pairingSessions, deviceTokens });
 
     const fixture = await livePairingSession(server);
     const signature = fixture.correctSignature();
@@ -776,8 +814,8 @@ describe('concurrent redemption', () => {
   });
 });
 
-describe('the response and the request carry no secret material', () => {
-  it('the successful response is exactly {paired:true} — no token of any kind', async () => {
+describe('the response carries exactly the new headset credentials, and nothing about the account', () => {
+  it('the successful response is exactly {paired, deviceId, accessToken, refreshToken, expiresIn}', async () => {
     const { server } = harness();
     const fixture = await livePairingSession(server);
 
@@ -787,11 +825,14 @@ describe('the response and the request carry no secret material', () => {
     });
     const body = json<Record<string, unknown>>(response);
 
-    expect(Object.keys(body)).toEqual(['paired']);
+    expect(Object.keys(body).sort()).toEqual(
+      ['accessToken', 'deviceId', 'expiresIn', 'paired', 'refreshToken'].sort(),
+    );
 
+    // What Step 3E deliberately does NOT hand back, however it is spelled —
+    // no field naming the account, the session, or a companion.
     const serialised = JSON.stringify(body);
     for (const forbidden of [
-      'accessToken', 'access_token', 'refreshToken', 'refresh_token',
       'deviceToken', 'device_token', 'companionId', 'companion_id',
       'userId', 'user_id', 'sessionId', 'session_id',
     ]) {
@@ -888,9 +929,9 @@ describe('this step creates no binding and no unrelated device', () => {
     const afterPhone = await devices.find(ALICE, fixture.phoneDeviceId as DeviceId);
     expect(afterPhone).toEqual(beforePhone);
 
-    const headset = await devices.find(ALICE, result.deviceId);
+    const headset = await devices.find(ALICE, result.redeemed.deviceId);
     expect(headset?.kind).toBe('headset');
-    expect(result.deviceId).not.toBe(fixture.phoneDeviceId);
+    expect(result.redeemed.deviceId).not.toBe(fixture.phoneDeviceId);
   });
 });
 

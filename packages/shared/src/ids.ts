@@ -81,6 +81,17 @@ export type EnrolmentId = Branded<string, 'EnrolmentId'>;
 export type PairingSessionId = Branded<string, 'PairingSessionId'>;
 
 /**
+ * One issued refresh credential — a single row in a device's rotation
+ * chain, not the chain itself.
+ *
+ * Branded apart from `DeviceId` and `PairingSessionId` for the usual
+ * reason: a device outlives every token it ever holds, and a token that has
+ * been rotated away from is a dead row a live device must never be
+ * confused with.
+ */
+export type DeviceTokenId = Branded<string, 'DeviceTokenId'>;
+
+/**
  * A tool's identifier is its stable registry name (`calendar.createEvent`), not
  * a generated id. Tools are declared by operators and referenced by the model
  * by name, so a random uuid would be an indirection with nothing on the other
@@ -146,6 +157,7 @@ export const newSessionId = (): SessionId => uuidv7() as SessionId;
 export const newDeviceId = (): DeviceId => uuidv7() as DeviceId;
 export const newEnrolmentId = (): EnrolmentId => uuidv7() as EnrolmentId;
 export const newPairingSessionId = (): PairingSessionId => uuidv7() as PairingSessionId;
+export const newDeviceTokenId = (): DeviceTokenId => uuidv7() as DeviceTokenId;
 
 /**
  * Adopts an externally supplied identifier.

@@ -40,6 +40,7 @@ export type {
   DeviceId,
   EnrolmentId,
   PairingSessionId,
+  DeviceTokenId,
   ToolId,
 } from './ids.js';
 export {
@@ -61,6 +62,7 @@ export {
   newDeviceId,
   newEnrolmentId,
   newPairingSessionId,
+  newDeviceTokenId,
   trustExternalId,
 } from './ids.js';
 

@@ -1,10 +1,18 @@
 import type { Pool } from 'pg';
-import { newDeviceId, newPairingSessionId, type DeviceId, type PairingSessionId, type UserId } from '@nexa/shared';
+import {
+  newDeviceId,
+  newPairingSessionId,
+  trustExternalId,
+  type DeviceId,
+  type PairingSessionId,
+  type UserId,
+} from '@nexa/shared';
 import { randomSecret, hashSecret } from './secrets.js';
 import { buildChallenge, verifyChallenge } from './challenge.js';
 import type { InMemoryEnrolmentStore } from './enrolments.js';
 import type { InMemoryDeviceStore } from './store.js';
 import type { KeySecurityLevel } from './enrolments.js';
+import { mintFamilyRoot, asCredentials, type InMemoryDeviceTokenStore } from './tokens.js';
 
 /**
  * Turning a headset's published key into a pairing session an authenticated
@@ -71,6 +79,15 @@ export interface RedeemPairingSessionInput {
   readonly signature: Buffer;
 }
 
+/** What a successful redemption hands back — a new headset identity, already credentialed. */
+export interface RedeemedPairingSession {
+  readonly deviceId: DeviceId;
+  readonly accessToken: string;
+  /** Plaintext, returned exactly once. Never persisted — only its hash is. */
+  readonly refreshToken: string;
+  readonly expiresInSeconds: number;
+}
+
 /**
  * `redemption_invalid` is the single failure this reports, deliberately
  * covering "no such code", "expired", "already redeemed", "cancelled" and
@@ -82,7 +99,7 @@ export interface RedeemPairingSessionInput {
  * see `PgPairingSessionStore.redeem`.
  */
 export type RedeemPairingSessionResult =
-  | { readonly ok: true; readonly deviceId: DeviceId }
+  | { readonly ok: true; readonly redeemed: RedeemedPairingSession }
   | { readonly ok: false; readonly reason: 'redemption_invalid' };
 
 export interface PairingSessionStore {
@@ -101,16 +118,18 @@ export interface PairingSessionStore {
 
   /**
    * Prove possession of the private key bound to a pending session and, if
-   * the proof holds, register the headset and mark the session redeemed.
+   * the proof holds, register the headset, mark the session redeemed, and
+   * mint its first `device_tokens` family root — access token and refresh
+   * token both, in the one transaction that also creates the headset.
    *
-   * Deliberately the operation that both verifies the proof AND performs the
-   * state change, rather than two calls a route would have to sequence
-   * correctly itself — the same "one domain operation, one owner" reasoning
-   * `create` already documents, extended to a second table.
+   * Deliberately the operation that verifies the proof, performs the state
+   * change, AND issues the resulting credentials, rather than three calls a
+   * route would have to sequence correctly itself — the same "one domain
+   * operation, one owner" reasoning `create` already documents, extended to
+   * a third table. Exactly one headset identity, and exactly one token
+   * family, ever come from a given redemption.
    *
-   * Issues no token of any kind and creates no companion binding. The
-   * returned `deviceId` identifies a headset that has proven itself and now
-   * exists on the account — nothing more.
+   * Creates no companion binding.
    */
   redeem(input: RedeemPairingSessionInput): Promise<RedeemPairingSessionResult>;
 }
@@ -147,6 +166,8 @@ export class InMemoryPairingSessionStore implements PairingSessionStore {
 
   readonly #enrolments: InMemoryEnrolmentStore;
   readonly #devices: InMemoryDeviceStore;
+  readonly #tokens: InMemoryDeviceTokenStore;
+  readonly #deviceTokenSecret: string;
   readonly #newId: PairingSessionIdSource;
   readonly #newCode: CodeSource;
   readonly #now: () => Date;
@@ -154,12 +175,16 @@ export class InMemoryPairingSessionStore implements PairingSessionStore {
   constructor(
     enrolments: InMemoryEnrolmentStore,
     devices: InMemoryDeviceStore,
+    tokens: InMemoryDeviceTokenStore,
+    deviceTokenSecret: string,
     newId: PairingSessionIdSource = newPairingSessionId,
     newCode: CodeSource = randomCode,
     now: () => Date = () => new Date(),
   ) {
     this.#enrolments = enrolments;
     this.#devices = devices;
+    this.#tokens = tokens;
+    this.#deviceTokenSecret = deviceTokenSecret;
     this.#newId = newId;
     this.#newCode = newCode;
     this.#now = now;
@@ -224,9 +249,16 @@ export class InMemoryPairingSessionStore implements PairingSessionStore {
       return fail();
     }
 
-    // No `await` between the check above and the write below: nothing can
-    // interleave in a single-threaded process, which is the in-memory
-    // analogue of the atomic conditional UPDATE the Postgres store issues.
+    // No `await` between the check above and the claim below — through to
+    // `found.status = 'redeemed'` — so nothing can interleave in a
+    // single-threaded process: the in-memory analogue of the atomic
+    // conditional UPDATE the Postgres store issues. Signing the access
+    // token IS awaited, but only once this block has already run to
+    // completion — by the time anything yields to the event loop, exactly
+    // one caller has already claimed the session, registered the headset,
+    // and inserted its token family. An `await` any earlier than this would
+    // let two concurrent callers both pass every check above before either
+    // writes, exactly the race this comment exists to prevent.
     if (found.status !== 'pending' || found.expiresAt.getTime() <= this.#now().getTime()) return fail();
 
     const deviceId = this.#devices.registerHeadset({
@@ -236,11 +268,45 @@ export class InMemoryPairingSessionStore implements PairingSessionStore {
       keySecurityLevel: found.headsetKeySecurityLevel,
     });
 
+    const now = this.#now();
+    const rootPrepared = mintFamilyRoot(now);
+    this.#tokens.insertRoot(rootPrepared, deviceId, found.userId);
+
     found.status = 'redeemed';
-    found.redeemedAt = this.#now();
+    found.redeemedAt = now;
     found.redeemedByDeviceId = deviceId;
 
-    return { ok: true, deviceId };
+    const credentials = await asCredentials(this.#deviceTokenSecret, found.userId, rootPrepared);
+
+    return {
+      ok: true,
+      redeemed: {
+        deviceId,
+        accessToken: credentials.accessToken,
+        refreshToken: credentials.refreshToken,
+        expiresInSeconds: credentials.expiresInSeconds,
+      },
+    };
+  }
+}
+
+/**
+ * Refuses every pairing session. What a deployment gets when
+ * `NEXA_DEVICE_TOKEN_SECRET` is not configured — the same reasoning
+ * `DenyAllAuthenticator` documents for a missing Supabase secret, applied
+ * here because `redeem` cannot safely issue a headset credential with no
+ * secret to sign it with. Failing every step, rather than only the final
+ * signing call, keeps the failure at the boundary a deployment operator
+ * actually looks at first — pairing simply does not start — instead of a
+ * phone successfully creating a session that can never be redeemed.
+ */
+export class DenyAllPairingSessionStore implements PairingSessionStore {
+  async create(): Promise<CreatePairingSessionResult> {
+    return { ok: false, reason: 'enrolment_invalid' };
+  }
+
+  async redeem(): Promise<RedeemPairingSessionResult> {
+    return { ok: false, reason: 'redemption_invalid' };
   }
 }
 
@@ -254,17 +320,20 @@ export type DeviceIdSource = () => DeviceId;
  */
 export class PgPairingSessionStore implements PairingSessionStore {
   readonly #pool: Pool;
+  readonly #deviceTokenSecret: string;
   readonly #newId: PairingSessionIdSource;
   readonly #newCode: CodeSource;
   readonly #newDeviceId: DeviceIdSource;
 
   constructor(
     pool: Pool,
+    deviceTokenSecret: string,
     newId: PairingSessionIdSource = newPairingSessionId,
     newCode: CodeSource = randomCode,
     newDeviceIdSource: DeviceIdSource = newDeviceId,
   ) {
     this.#pool = pool;
+    this.#deviceTokenSecret = deviceTokenSecret;
     this.#newId = newId;
     this.#newCode = newCode;
     this.#newDeviceId = newDeviceIdSource;
@@ -488,8 +557,38 @@ export class PgPairingSessionStore implements PairingSessionStore {
         return fail();
       }
 
+      // The token family's root, in the same transaction that just created
+      // the headset — the two either both exist or neither does. `family_id`
+      // equals its own `id`: this row IS the family's origin, exactly as
+      // `mintFamilyRoot` documents.
+      const userId = trustExternalId<UserId>(session.user_id);
+      const rootPrepared = mintFamilyRoot();
+      await client.query(
+        `insert into device_tokens
+           (id, family_id, family_issued_at, device_id, user_id, token_hash, issued_at, expires_at)
+         values ($1, $1, $2, $3, $4, $5, $2, $6)`,
+        [
+          rootPrepared.id,
+          rootPrepared.issuedAt,
+          deviceId,
+          userId,
+          rootPrepared.refreshTokenHash,
+          rootPrepared.expiresAt,
+        ],
+      );
+
       await client.query('commit');
-      return { ok: true, deviceId };
+
+      const credentials = await asCredentials(this.#deviceTokenSecret, userId, rootPrepared);
+      return {
+        ok: true,
+        redeemed: {
+          deviceId,
+          accessToken: credentials.accessToken,
+          refreshToken: credentials.refreshToken,
+          expiresInSeconds: credentials.expiresInSeconds,
+        },
+      };
     } catch (error) {
       await client.query('rollback').catch(() => {
         // The transaction may already be aborted by the error above.
