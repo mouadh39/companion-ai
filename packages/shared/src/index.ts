@@ -37,6 +37,7 @@ export type {
   VoiceSessionId,
   PlanId,
   SessionId,
+  DeviceId,
   ToolId,
 } from './ids.js';
 export {
@@ -55,6 +56,7 @@ export {
   newVoiceSessionId,
   newPlanId,
   newSessionId,
+  newDeviceId,
   trustExternalId,
 } from './ids.js';
 

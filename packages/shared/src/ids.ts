@@ -48,6 +48,16 @@ export type PlanId = Branded<string, 'PlanId'>;
 export type SessionId = Branded<string, 'SessionId'>;
 
 /**
+ * A physical device on an account — a phone, or a headset that has paired.
+ *
+ * Branded apart from `SessionId` because the two have opposite lifetimes: a
+ * session lasts as long as a connection, a device outlives every session it
+ * ever holds. Assigning one where the other is meant is exactly the mistake
+ * that makes "forget this device" fail to end anything.
+ */
+export type DeviceId = Branded<string, 'DeviceId'>;
+
+/**
  * A tool's identifier is its stable registry name (`calendar.createEvent`), not
  * a generated id. Tools are declared by operators and referenced by the model
  * by name, so a random uuid would be an indirection with nothing on the other
@@ -110,6 +120,7 @@ export const newWorldObjectId = (): WorldObjectId => uuidv7() as WorldObjectId;
 export const newVoiceSessionId = (): VoiceSessionId => uuidv7() as VoiceSessionId;
 export const newPlanId = (): PlanId => uuidv7() as PlanId;
 export const newSessionId = (): SessionId => uuidv7() as SessionId;
+export const newDeviceId = (): DeviceId => uuidv7() as DeviceId;
 
 /**
  * Adopts an externally supplied identifier.
