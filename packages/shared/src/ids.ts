@@ -58,6 +58,29 @@ export type SessionId = Branded<string, 'SessionId'>;
 export type DeviceId = Branded<string, 'DeviceId'>;
 
 /**
+ * A headset's public key, published before it is a device.
+ *
+ * Branded apart from `DeviceId` because an enrolment is not a device and must
+ * never be read as one: it grants no account access, belongs to no user, and
+ * is consumed rather than kept. Confusing the two is exactly the mistake that
+ * would let an unclaimed public key be treated as though it already had an
+ * owner.
+ */
+export type EnrolmentId = Branded<string, 'EnrolmentId'>;
+
+/**
+ * One attempt to pair a specific headset key to an account, carrying exactly
+ * one live code.
+ *
+ * Branded apart from `EnrolmentId` because a session is not the enrolment it
+ * was created from — it is the account-scoped consequence of consuming one.
+ * An enrolment and the session it fed are both single-use for reasons that
+ * do not transfer: confusing the two ids is how a resolved handle could end
+ * up compared against a session that never consumed it.
+ */
+export type PairingSessionId = Branded<string, 'PairingSessionId'>;
+
+/**
  * A tool's identifier is its stable registry name (`calendar.createEvent`), not
  * a generated id. Tools are declared by operators and referenced by the model
  * by name, so a random uuid would be an indirection with nothing on the other
@@ -121,6 +144,8 @@ export const newVoiceSessionId = (): VoiceSessionId => uuidv7() as VoiceSessionI
 export const newPlanId = (): PlanId => uuidv7() as PlanId;
 export const newSessionId = (): SessionId => uuidv7() as SessionId;
 export const newDeviceId = (): DeviceId => uuidv7() as DeviceId;
+export const newEnrolmentId = (): EnrolmentId => uuidv7() as EnrolmentId;
+export const newPairingSessionId = (): PairingSessionId => uuidv7() as PairingSessionId;
 
 /**
  * Adopts an externally supplied identifier.

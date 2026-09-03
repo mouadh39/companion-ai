@@ -38,6 +38,8 @@ export type {
   PlanId,
   SessionId,
   DeviceId,
+  EnrolmentId,
+  PairingSessionId,
   ToolId,
 } from './ids.js';
 export {
@@ -57,6 +59,8 @@ export {
   newPlanId,
   newSessionId,
   newDeviceId,
+  newEnrolmentId,
+  newPairingSessionId,
   trustExternalId,
 } from './ids.js';
 
