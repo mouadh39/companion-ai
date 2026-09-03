@@ -13,11 +13,19 @@ import { createHash, createPublicKey } from 'node:crypto';
  * was published is the kind of thing the protocol expects.
  */
 
-const isPlausibleBase64 = (value: string): boolean =>
-  // `Buffer.from(str, 'base64')` does not throw on nonsense — it decodes
-  // whatever it can and silently drops the rest, which would let malformed
-  // input pass as a truncated or empty key instead of being refused as what
-  // it actually is. Checked before decoding, not after.
+/**
+ * Whether a string is safe to decode as standard base64.
+ *
+ * `Buffer.from(str, 'base64')` does not throw on nonsense — it decodes
+ * whatever it can and silently drops the rest, which would let malformed
+ * input pass as a truncated or empty value instead of being refused as what
+ * it actually is. Checked before decoding, not after.
+ *
+ * Exported because it is not specific to a public key — a signature is the
+ * same kind of base64-encoded binary field, and deserves the same rigor
+ * rather than a second, independently-written check.
+ */
+export const isPlausibleBase64 = (value: string): boolean =>
   value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 
 export type SpkiFailureReason = 'malformed_base64' | 'malformed_der' | 'not_ec' | 'wrong_curve';

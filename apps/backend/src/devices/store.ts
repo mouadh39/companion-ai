@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { newDeviceId, type DeviceId, type UserId } from '@nexa/shared';
+import type { KeySecurityLevel } from './enrolments.js';
 
 /**
  * The devices on an account.
@@ -100,6 +101,38 @@ export class InMemoryDeviceStore implements DeviceStore {
     // Scoped by owner, not merely looked up. A find that ignored `userId`
     // would answer "does this device exist" to anybody who guessed an id.
     return row !== undefined && row.userId === userId && row.revokedAt === null ? row : null;
+  }
+
+  /**
+   * Registers a headset immediately after it has proven possession of its
+   * private key during pairing redemption.
+   *
+   * Not part of `DeviceStore`. A public method here would be a second way to
+   * create a headset row — one with no proof requirement behind it — so this
+   * exists only on the concrete class, called by `InMemoryPairingSessionStore`
+   * from inside the same redemption that just verified the signature. The
+   * same reasoning as `consumeIfLive`.
+   *
+   * Synchronous, and returns the id directly rather than a record: nothing
+   * that creates a headset this way needs anything back but the id to close
+   * out `pairing_sessions.redeemed_by_device_id`.
+   */
+  registerHeadset(input: {
+    readonly userId: UserId;
+    readonly publicKey: Buffer;
+    readonly publicKeyId: string;
+    readonly keySecurityLevel: KeySecurityLevel | null;
+  }): DeviceId {
+    const id = this.#newId();
+    this.#rows.set(id, {
+      id,
+      userId: input.userId,
+      kind: 'headset',
+      label: null,
+      registeredAt: this.#now(),
+      revokedAt: null,
+    });
+    return id;
   }
 }
 

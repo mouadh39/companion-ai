@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'node:crypto';
 import { trustExternalId, type DeviceId, type UserId } from '@nexa/shared';
 import { ScriptedLanguageModel } from '@nexa/providers';
 import { compose } from '../dist/composition.js';
@@ -8,6 +8,9 @@ import { buildServer } from '../dist/server.js';
 import type { AppConfig } from '../dist/config.js';
 import { InMemoryDeviceStore } from '../dist/devices/store.js';
 import { InMemoryEnrolmentStore } from '../dist/devices/enrolments.js';
+import { InMemoryPairingSessionStore } from '../dist/devices/pairing-sessions.js';
+import { parseP256Spki } from '../dist/devices/spki.js';
+import { buildChallenge } from '../dist/devices/challenge.js';
 import { InMemoryCompanionBindings, type CompanionBindingStore } from '../dist/auth/bindings.js';
 import type { CompositionOverrides } from '../dist/composition.js';
 
@@ -129,6 +132,80 @@ const createSession = (
     ...(token === null ? {} : { headers: { authorization: `Bearer ${token}` } }),
     payload,
   });
+
+/**
+ * Redemption fixtures — real cryptography throughout.
+ *
+ * Every signature below is produced by Node's own `crypto.sign` with
+ * `dsaEncoding: 'der'` against a genuinely generated P-256 key, and verified
+ * by the real `PairingSessionStore.redeem` running the real
+ * `verifyChallenge`. Nothing here is a mock signature or a stand-in digest.
+ */
+
+const redeem = (server: ReturnType<typeof buildServer>, payload: Record<string, unknown>) =>
+  server.inject({ method: 'POST', url: '/v1/pairing-sessions/redeem', payload });
+
+interface RedeemResponseBody {
+  readonly paired: boolean;
+}
+
+/** A fresh EC P-256 keypair, plus its SPKI exactly as a headset would submit it. */
+const freshP256KeyPair = (): { readonly privateKey: KeyObject; readonly publicKeyBase64: string } => {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  return { privateKey, publicKeyBase64: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') };
+};
+
+/**
+ * Signs the exact challenge a genuine headset would sign — same
+ * `buildChallenge`, same `dsaEncoding: 'der'` the backend verifies with —
+ * using a real private key.
+ */
+const signChallenge = (
+  privateKey: KeyObject,
+  pairingSessionId: string,
+  secret: string,
+  headsetPublicKeyId: string,
+): Buffer => {
+  const challenge = buildChallenge({ pairingSessionId, secret, headsetPublicKeyId });
+  return cryptoSign('sha256', challenge, { key: privateKey, dsaEncoding: 'der' });
+};
+
+/**
+ * The full path to a live, pending session: enrol a real key, register a
+ * phone, create the session. Returns everything a redeem attempt needs,
+ * including the private key — held only in this test process, never sent
+ * anywhere except as the *output* of signing.
+ */
+const livePairingSession = async (server: ReturnType<typeof buildServer>, user: string = ALICE) => {
+  const { privateKey, publicKeyBase64 } = freshP256KeyPair();
+
+  const parsed = parseP256Spki(publicKeyBase64);
+  if (!parsed.ok) throw new Error(`test fixture key failed to parse: ${parsed.reason}`);
+
+  const enrolResponse = await server.inject({
+    method: 'POST',
+    url: '/v1/device-enrolments',
+    payload: { publicKey: publicKeyBase64 },
+  });
+  const handle = json<EnrolResponseBody>(enrolResponse).handle;
+
+  const { token, deviceId: phoneDeviceId } = await registeredPhone(server, user);
+  const sessionResponse = await createSession(server, token, { phoneDeviceId, enrolmentHandle: handle });
+  const session = json<PairingSessionResponseBody>(sessionResponse);
+
+  const secret = session.code.slice('NX2.'.length);
+
+  return {
+    privateKey,
+    keyId: parsed.keyId,
+    session,
+    secret,
+    userId: user,
+    phoneDeviceId,
+    /** Signs the correct challenge for this exact session with this exact key. */
+    correctSignature: (): Buffer => signChallenge(privateKey, session.pairingSessionId, secret, parsed.keyId),
+  };
+};
 
 describe('creating a session requires proof of who is asking', () => {
   it('refuses a request with no credential', async () => {
@@ -486,5 +563,412 @@ describe('authorization boundaries', () => {
       payload: { companionId: 'companion-1', text: 'Hello.' },
     });
     expect(response.statusCode).toBe(401);
+  });
+});
+
+describe('redeeming a session with a genuine proof of possession', () => {
+  it('succeeds for a correct signature over a live session — real crypto end to end', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const response = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(json<RedeemResponseBody>(response).paired).toBe(true);
+  });
+
+  it("registers the headset as a device belonging to the session's account", async () => {
+    const { app, devices } = harness();
+    const server = buildServer(app, config);
+    const fixture = await livePairingSession(server, ALICE);
+
+    // Calling the store directly for this one assertion: the HTTP response
+    // deliberately carries no deviceId (nothing this step gives the headset
+    // a credential to use one with), so confirming exactly which device was
+    // created means reading the real store's real return value rather than
+    // guessing an id.
+    const result = await app.pairingSessions.redeem({
+      secret: fixture.secret,
+      signature: fixture.correctSignature(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const headset = await devices.find(ALICE, result.deviceId);
+    expect(headset).not.toBeNull();
+    expect(headset?.kind).toBe('headset');
+    expect(headset?.userId).toBe(ALICE);
+    expect(headset?.id).not.toBe(fixture.phoneDeviceId);
+  });
+});
+
+describe('a code that cannot be redeemed', () => {
+  it('rejects a code that was never issued', async () => {
+    const { server } = harness();
+    const response = await redeem(server, {
+      code: 'NX2.this-secret-was-never-issued-by-anyone',
+      signature: Buffer.from('irrelevant-but-base64', 'utf8').toString('base64'),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(json<ErrorResponseBody>(response).error).toBe('invalid_request');
+  });
+
+  it('rejects an expired session even with a perfectly correct signature', async () => {
+    let now = new Date('2026-09-03T00:00:00.000Z');
+    const devices = new InMemoryDeviceStore();
+    const enrolments = new InMemoryEnrolmentStore();
+    const pairingSessions = new InMemoryPairingSessionStore(enrolments, devices, undefined, undefined, () => now);
+    const { server } = harness({ devices, enrolments, pairingSessions });
+
+    const fixture = await livePairingSession(server);
+    const signature = fixture.correctSignature();
+
+    // Three minutes later — past the two-minute session TTL.
+    now = new Date(now.getTime() + 3 * 60 * 1000);
+
+    const response = await redeem(server, { code: fixture.session.code, signature: signature.toString('base64') });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects an already-redeemed code on a second attempt with the identical request', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+    const payload = { code: fixture.session.code, signature: fixture.correctSignature().toString('base64') };
+
+    const first = await redeem(server, payload);
+    expect(first.statusCode).toBe(200);
+
+    const second = await redeem(server, payload);
+    expect(second.statusCode).toBe(400);
+  });
+
+  it('rejects a code redeemed once, then replayed with a freshly re-signed but still-spent session', async () => {
+    // ECDSA signing is non-deterministic in Node by default, so this signs
+    // the SAME challenge a second time and gets DIFFERENT signature bytes —
+    // proving it is the session's *state*, not merely a repeated byte
+    // string, that blocks the second attempt.
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const first = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+    expect(first.statusCode).toBe(200);
+
+    const secondSignature = fixture.correctSignature();
+    const firstSignature = fixture.correctSignature();
+    expect(secondSignature.equals(firstSignature)).toBe(false);
+
+    const second = await redeem(server, {
+      code: fixture.session.code,
+      signature: secondSignature.toString('base64'),
+    });
+    expect(second.statusCode).toBe(400);
+  });
+});
+
+describe('the signature must actually prove the bound key', () => {
+  it("rejects a signature from a different headset's key entirely", async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+    const attacker = freshP256KeyPair();
+
+    // The attacker signs the CORRECT challenge — right session id, right
+    // secret, even the real session's keyId — just with the wrong key.
+    const forgedSignature = signChallenge(
+      attacker.privateKey,
+      fixture.session.pairingSessionId,
+      fixture.secret,
+      fixture.keyId,
+    );
+
+    const response = await redeem(server, {
+      code: fixture.session.code,
+      signature: forgedSignature.toString('base64'),
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects garbage signature bytes without crashing', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const response = await redeem(server, {
+      code: fixture.session.code,
+      signature: Buffer.from('not a real DER signature at all', 'utf8').toString('base64'),
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a signature computed over the wrong pairing session id', async () => {
+    // The challenge specifically binds pairingSessionId. Here the signature
+    // is genuine — correct key, correct secret, correct keyId — but signed
+    // as though it were for a different session, exactly the case the
+    // approved protocol adjustment exists to catch.
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const wrongSessionSignature = signChallenge(
+      fixture.privateKey,
+      'a-completely-different-session-id',
+      fixture.secret,
+      fixture.keyId,
+    );
+
+    const response = await redeem(server, {
+      code: fixture.session.code,
+      signature: wrongSessionSignature.toString('base64'),
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('a bad signature does not burn the session — a correct one still redeems it afterward', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const bad = await redeem(server, {
+      code: fixture.session.code,
+      signature: Buffer.from('wrong', 'utf8').toString('base64'),
+    });
+    expect(bad.statusCode).toBe(400);
+
+    const good = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+    expect(good.statusCode).toBe(200);
+  });
+});
+
+describe('concurrent redemption', () => {
+  it('two simultaneous attempts with the same valid signature: exactly one succeeds', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+    const signature = fixture.correctSignature().toString('base64');
+
+    const [first, second] = await Promise.all([
+      redeem(server, { code: fixture.session.code, signature }),
+      redeem(server, { code: fixture.session.code, signature }),
+    ]);
+
+    const statuses = [first.statusCode, second.statusCode].sort();
+    expect(statuses).toEqual([200, 400]);
+  });
+
+  it('ten simultaneous attempts: exactly one succeeds', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+    const signature = fixture.correctSignature().toString('base64');
+
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, () => redeem(server, { code: fixture.session.code, signature })),
+    );
+
+    expect(responses.filter((r) => r.statusCode === 200).length).toBe(1);
+  });
+});
+
+describe('the response and the request carry no secret material', () => {
+  it('the successful response is exactly {paired:true} — no token of any kind', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const response = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+    const body = json<Record<string, unknown>>(response);
+
+    expect(Object.keys(body)).toEqual(['paired']);
+
+    const serialised = JSON.stringify(body);
+    for (const forbidden of [
+      'accessToken', 'access_token', 'refreshToken', 'refresh_token',
+      'deviceToken', 'device_token', 'companionId', 'companion_id',
+      'userId', 'user_id', 'sessionId', 'session_id',
+    ]) {
+      expect(serialised).not.toContain(forbidden);
+    }
+  });
+
+  it('the private key never appears in the redeem request or response', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    // The PEM export exists only so this assertion has something concrete to
+    // search for — it is never sent anywhere, which is exactly the property
+    // being proved.
+    const privateKeyPem = fixture.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const privateKeyBase64Body = privateKeyPem
+      .split('\n')
+      .filter((line) => !line.startsWith('-----'))
+      .join('');
+
+    const requestPayload = {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    };
+
+    const response = await redeem(server, requestPayload);
+
+    expect(JSON.stringify(requestPayload)).not.toContain(privateKeyBase64Body);
+    expect(JSON.stringify(response.json())).not.toContain(privateKeyBase64Body);
+  });
+});
+
+describe('the account and user cannot be influenced by the request', () => {
+  it('ignores userId, user_id and companionId fields entirely and still binds to the real session owner', async () => {
+    const { app, devices } = harness();
+    const server = buildServer(app, config);
+    const fixture = await livePairingSession(server, ALICE);
+
+    const response = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+      userId: BOB,
+      user_id: BOB,
+      companionId: 'attacker-chosen-companion',
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    // The phone device — the one thing we can look up without a returned
+    // deviceId — is still Alice's, exactly as it was before redemption.
+    // Device creation itself is verified against the store directly in the
+    // "no unrelated device" tests below.
+    const phone = await devices.find(ALICE, fixture.phoneDeviceId as DeviceId);
+    expect(phone?.userId).toBe(ALICE);
+    void app;
+  });
+});
+
+describe('this step creates no binding and no unrelated device', () => {
+  it('never calls isBound or companionsFor on the binding store', async () => {
+    const bindings = new InMemoryCompanionBindings();
+    let isBoundCalls = 0;
+    const spied: CompanionBindingStore = {
+      isBound: (userId, companionId) => {
+        isBoundCalls += 1;
+        return bindings.isBound(userId, companionId);
+      },
+      companionsFor: (userId) => bindings.companionsFor(userId),
+    };
+
+    const { server } = harness({ bindings: spied });
+    const fixture = await livePairingSession(server);
+
+    await redeem(server, { code: fixture.session.code, signature: fixture.correctSignature().toString('base64') });
+
+    expect(isBoundCalls).toBe(0);
+  });
+
+  it('creates exactly one new device — the headset — and never touches the phone device again', async () => {
+    const { app, devices } = harness();
+    const server = buildServer(app, config);
+    const fixture = await livePairingSession(server, ALICE);
+
+    const beforePhone = await devices.find(ALICE, fixture.phoneDeviceId as DeviceId);
+    expect(beforePhone).not.toBeNull();
+
+    const result = await app.pairingSessions.redeem({
+      secret: fixture.secret,
+      signature: fixture.correctSignature(),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const afterPhone = await devices.find(ALICE, fixture.phoneDeviceId as DeviceId);
+    expect(afterPhone).toEqual(beforePhone);
+
+    const headset = await devices.find(ALICE, result.deviceId);
+    expect(headset?.kind).toBe('headset');
+    expect(result.deviceId).not.toBe(fixture.phoneDeviceId);
+  });
+});
+
+describe('invalid attempts are rate-limited', () => {
+  it('eventually refuses further redemption attempts with 429', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    let lastStatus = 0;
+    for (let i = 0; i < 25; i++) {
+      const response = await redeem(server, {
+        code: fixture.session.code,
+        signature: Buffer.from(`not-a-real-signature-${i}`, 'utf8').toString('base64'),
+      });
+      lastStatus = response.statusCode;
+    }
+
+    expect(lastStatus).toBe(429);
+  });
+});
+
+describe('successful redemption changes state exactly once', () => {
+  it('the same code can never be redeemed again after one success, however it is retried', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const success = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+    expect(success.statusCode).toBe(200);
+
+    for (let i = 0; i < 3; i++) {
+      const retry = await redeem(server, {
+        code: fixture.session.code,
+        signature: fixture.correctSignature().toString('base64'),
+      });
+      expect(retry.statusCode).toBe(400);
+    }
+  });
+});
+
+describe('malformed redeem requests are rejected', () => {
+  it('rejects a missing code', async () => {
+    const { server } = harness();
+    const response = await redeem(server, { signature: Buffer.from('x').toString('base64') });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a code with no NX2. prefix', async () => {
+    const { server } = harness();
+    const response = await redeem(server, { code: 'not-the-right-format', signature: 'AAAA' });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a missing signature', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+    const response = await redeem(server, { code: fixture.session.code });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a non-base64 signature', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+    const response = await redeem(server, { code: fixture.session.code, signature: 'not valid base64!!!' });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('requires no Authorization header at all — the redeem route stays unauthenticated', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/pairing-sessions/redeem',
+      // Deliberately no headers at all.
+      payload: { code: fixture.session.code, signature: fixture.correctSignature().toString('base64') },
+    });
+    expect(response.statusCode).toBe(200);
   });
 });

@@ -1,7 +1,10 @@
 import type { Pool } from 'pg';
-import { newPairingSessionId, type DeviceId, type PairingSessionId, type UserId } from '@nexa/shared';
+import { newDeviceId, newPairingSessionId, type DeviceId, type PairingSessionId, type UserId } from '@nexa/shared';
 import { randomSecret, hashSecret } from './secrets.js';
+import { buildChallenge, verifyChallenge } from './challenge.js';
 import type { InMemoryEnrolmentStore } from './enrolments.js';
+import type { InMemoryDeviceStore } from './store.js';
+import type { KeySecurityLevel } from './enrolments.js';
 
 /**
  * Turning a headset's published key into a pairing session an authenticated
@@ -52,6 +55,36 @@ export type CreatePairingSessionResult =
   | { readonly ok: true; readonly session: PairingSessionIssued }
   | { readonly ok: false; readonly reason: 'enrolment_invalid' };
 
+export interface RedeemPairingSessionInput {
+  /**
+   * The code exactly as the headset read it, WITHOUT the `NX2.` prefix — the
+   * caller (the route) strips it, since prefix validation is a request-shape
+   * concern and this store's job starts at the secret itself.
+   */
+  readonly secret: string;
+  /**
+   * The headset's raw ECDSA signature bytes, ASN.1 DER encoded, already
+   * decoded from whatever transport encoding the request used. Verified
+   * against the challenge built from server-side values only — see
+   * `buildChallenge` and `verifyChallenge`.
+   */
+  readonly signature: Buffer;
+}
+
+/**
+ * `redemption_invalid` is the single failure this reports, deliberately
+ * covering "no such code", "expired", "already redeemed", "cancelled" and
+ * "wrong signature" alike. A caller — legitimate or not — cannot act
+ * differently on any of these, and distinguishing them in the response would
+ * hand a prober exactly the information it should never get: which of its
+ * guesses came closer. The one exception is a signature that failed to
+ * verify, which additionally counts against the session's `attempt_count` —
+ * see `PgPairingSessionStore.redeem`.
+ */
+export type RedeemPairingSessionResult =
+  | { readonly ok: true; readonly deviceId: DeviceId }
+  | { readonly ok: false; readonly reason: 'redemption_invalid' };
+
 export interface PairingSessionStore {
   /**
    * Resolve an enrolment handle and, if it is genuinely live, consume it and
@@ -65,6 +98,21 @@ export interface PairingSessionStore {
    * hold.
    */
   create(input: CreatePairingSessionInput): Promise<CreatePairingSessionResult>;
+
+  /**
+   * Prove possession of the private key bound to a pending session and, if
+   * the proof holds, register the headset and mark the session redeemed.
+   *
+   * Deliberately the operation that both verifies the proof AND performs the
+   * state change, rather than two calls a route would have to sequence
+   * correctly itself — the same "one domain operation, one owner" reasoning
+   * `create` already documents, extended to a second table.
+   *
+   * Issues no token of any kind and creates no companion binding. The
+   * returned `deviceId` identifies a headset that has proven itself and now
+   * exists on the account — nothing more.
+   */
+  redeem(input: RedeemPairingSessionInput): Promise<RedeemPairingSessionResult>;
 }
 
 /** Long enough to hold a code on screen; short enough that leaving it up costs little. */
@@ -75,24 +123,43 @@ export type CodeSource = () => string;
 
 const randomCode: CodeSource = randomSecret;
 
+interface SessionRow {
+  readonly id: PairingSessionId;
+  readonly userId: UserId;
+  readonly codeHash: string;
+  readonly headsetPublicKey: Buffer;
+  readonly headsetPublicKeyId: string;
+  readonly headsetKeySecurityLevel: KeySecurityLevel | null;
+  status: 'pending' | 'redeemed' | 'expired' | 'cancelled' | 'failed';
+  attemptCount: number;
+  readonly expiresAt: Date;
+  redeemedAt: Date | null;
+  redeemedByDeviceId: DeviceId | null;
+}
+
 /**
  * Pairing sessions held in memory, sharing rows with an
- * `InMemoryEnrolmentStore` exactly as the Postgres pair shares one physical
- * `device_enrolments` table.
+ * `InMemoryEnrolmentStore` and an `InMemoryDeviceStore` exactly as the
+ * Postgres trio shares three physical tables.
  */
 export class InMemoryPairingSessionStore implements PairingSessionStore {
+  readonly #sessions = new Map<string, SessionRow>();
+
   readonly #enrolments: InMemoryEnrolmentStore;
+  readonly #devices: InMemoryDeviceStore;
   readonly #newId: PairingSessionIdSource;
   readonly #newCode: CodeSource;
   readonly #now: () => Date;
 
   constructor(
     enrolments: InMemoryEnrolmentStore,
+    devices: InMemoryDeviceStore,
     newId: PairingSessionIdSource = newPairingSessionId,
     newCode: CodeSource = randomCode,
     now: () => Date = () => new Date(),
   ) {
     this.#enrolments = enrolments;
+    this.#devices = devices;
     this.#newId = newId;
     this.#newCode = newCode;
     this.#now = now;
@@ -108,15 +175,79 @@ export class InMemoryPairingSessionStore implements PairingSessionStore {
     const code = this.#newCode();
     const expiresAt = new Date(now.getTime() + PAIRING_SESSION_TTL_MS);
 
+    this.#sessions.set(id, {
+      id,
+      userId: input.userId,
+      codeHash: hashSecret(code),
+      headsetPublicKey: consumed.publicKey,
+      headsetPublicKeyId: consumed.publicKeyId,
+      headsetKeySecurityLevel: consumed.keySecurityLevel,
+      status: 'pending',
+      attemptCount: 0,
+      expiresAt,
+      redeemedAt: null,
+      redeemedByDeviceId: null,
+    });
+
     return {
       ok: true,
       session: { pairingSessionId: id, code: `NX2.${code}`, expiresAt },
     };
   }
+
+  async redeem(input: RedeemPairingSessionInput): Promise<RedeemPairingSessionResult> {
+    const codeHash = hashSecret(input.secret);
+    let found: SessionRow | undefined;
+    for (const row of this.#sessions.values()) {
+      if (row.codeHash === codeHash) {
+        found = row;
+        break;
+      }
+    }
+
+    const fail = (): RedeemPairingSessionResult => ({ ok: false, reason: 'redemption_invalid' });
+
+    if (found === undefined) return fail();
+    if (found.status !== 'pending' || found.expiresAt.getTime() <= this.#now().getTime()) return fail();
+
+    const challenge = buildChallenge({
+      pairingSessionId: found.id,
+      secret: input.secret,
+      headsetPublicKeyId: found.headsetPublicKeyId,
+    });
+    const verdict = verifyChallenge(found.headsetPublicKey, challenge, input.signature);
+
+    if (verdict !== 'valid') {
+      // Counted, never burned. A wrong signature costs the caller nothing
+      // about the session's own state — see the module doc on `redeem`.
+      found.attemptCount += 1;
+      return fail();
+    }
+
+    // No `await` between the check above and the write below: nothing can
+    // interleave in a single-threaded process, which is the in-memory
+    // analogue of the atomic conditional UPDATE the Postgres store issues.
+    if (found.status !== 'pending' || found.expiresAt.getTime() <= this.#now().getTime()) return fail();
+
+    const deviceId = this.#devices.registerHeadset({
+      userId: found.userId,
+      publicKey: found.headsetPublicKey,
+      publicKeyId: found.headsetPublicKeyId,
+      keySecurityLevel: found.headsetKeySecurityLevel,
+    });
+
+    found.status = 'redeemed';
+    found.redeemedAt = this.#now();
+    found.redeemedByDeviceId = deviceId;
+
+    return { ok: true, deviceId };
+  }
 }
 
+export type DeviceIdSource = () => DeviceId;
+
 /**
- * Pairing sessions in Postgres, against `pairing_sessions` and
+ * Pairing sessions in Postgres, against `pairing_sessions`, `devices` and
  * `device_enrolments` exactly as `0005_devices_and_pairing.sql` and
  * `0006_device_enrolments.sql` define them. No new migration was required —
  * every column this writes already exists.
@@ -125,11 +256,18 @@ export class PgPairingSessionStore implements PairingSessionStore {
   readonly #pool: Pool;
   readonly #newId: PairingSessionIdSource;
   readonly #newCode: CodeSource;
+  readonly #newDeviceId: DeviceIdSource;
 
-  constructor(pool: Pool, newId: PairingSessionIdSource = newPairingSessionId, newCode: CodeSource = randomCode) {
+  constructor(
+    pool: Pool,
+    newId: PairingSessionIdSource = newPairingSessionId,
+    newCode: CodeSource = randomCode,
+    newDeviceIdSource: DeviceIdSource = newDeviceId,
+  ) {
     this.#pool = pool;
     this.#newId = newId;
     this.#newCode = newCode;
+    this.#newDeviceId = newDeviceIdSource;
   }
 
   async create(input: CreatePairingSessionInput): Promise<CreatePairingSessionResult> {
@@ -224,6 +362,144 @@ export class PgPairingSessionStore implements PairingSessionStore {
         // The transaction may already be aborted by the error above; a
         // failed rollback here must not shadow the original failure.
       });
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Verifies proof of possession and, if it holds, registers the headset and
+   * marks the session redeemed — all against live production data, so every
+   * step is deliberate about what it trusts and when it writes.
+   *
+   * ## The shape of this method, in order
+   *
+   * 1. **Resolve** the session by `code_hash` — a plain read, no lock, no
+   *    transaction yet. Nothing about this read needs to be atomic with what
+   *    follows: whatever it sees, the state transition at the end re-checks
+   *    the same predicate for real.
+   * 2. **Reject early** if the session is not `pending` or has expired —
+   *    without touching cryptography, since there is no point verifying a
+   *    signature against a session that cannot be redeemed regardless of the
+   *    answer.
+   * 3. **Verify** the signature against a challenge built entirely from what
+   *    step 1 returned — `pairingSessionId`, `secret` (from the caller, but
+   *    only meaningful because it hashed to this exact row), and
+   *    `headsetPublicKeyId` (from the row, never from the caller). Pure
+   *    computation; nothing is written yet.
+   * 4. **On failure**, count the attempt and stop. The session's `status`
+   *    does not change — see below for why that matters.
+   * 5. **On success**, one transaction: insert the headset's `devices` row,
+   *    then the atomic conditional `UPDATE` that is this method's actual
+   *    concurrency guarantee — see the comment on that statement.
+   *
+   * ## Why a bad signature does not burn the session
+   *
+   * `pairing_sessions.attempt_count` exists in the schema for exactly this:
+   * a photographed QR handed to a second, illegitimate device yields a
+   * signature that will never verify, no matter how many times it is tried
+   * — and marking the session `failed` on the first wrong attempt would let
+   * that second device deny service to the legitimate headset still holding
+   * the real key. Rate limiting (see the route) bounds the cost of retrying;
+   * the session itself stays `pending` until either a valid proof redeems it
+   * or it genuinely expires.
+   */
+  async redeem(input: RedeemPairingSessionInput): Promise<RedeemPairingSessionResult> {
+    const fail = (): RedeemPairingSessionResult => ({ ok: false, reason: 'redemption_invalid' });
+    const codeHash = hashSecret(input.secret);
+
+    const found = await this.#pool.query<{
+      readonly id: string;
+      readonly user_id: string;
+      readonly status: string;
+      readonly expires_at: Date;
+      readonly headset_public_key: Buffer;
+      readonly headset_public_key_id: string;
+      readonly headset_key_security_level: string | null;
+    }>(
+      `select id, user_id, status, expires_at,
+              headset_public_key, headset_public_key_id, headset_key_security_level
+         from pairing_sessions
+        where code_hash = $1`,
+      [codeHash],
+    );
+
+    const session = found.rows[0];
+    if (session === undefined) return fail();
+    if (session.status !== 'pending' || session.expires_at.getTime() <= Date.now()) return fail();
+
+    const challenge = buildChallenge({
+      pairingSessionId: session.id,
+      secret: input.secret,
+      headsetPublicKeyId: session.headset_public_key_id,
+    });
+    const verdict = verifyChallenge(session.headset_public_key, challenge, input.signature);
+
+    if (verdict !== 'valid') {
+      // Not transactional with anything else, and deliberately not: a lost
+      // increment under a rare concurrent bad guess is imprecise telemetry,
+      // not a correctness failure, and this write must never be allowed to
+      // block or be blocked by a legitimate redemption in flight.
+      await this.#pool
+        .query('update pairing_sessions set attempt_count = attempt_count + 1 where id = $1', [session.id])
+        .catch(() => {
+          // Logged nowhere further up on purpose: failing to record an
+          // attempt must never turn into failing the caller's request.
+        });
+      return fail();
+    }
+
+    const deviceId = this.#newDeviceId();
+    const client = await this.#pool.connect();
+    try {
+      await client.query('begin');
+
+      await client.query(
+        `insert into devices (id, user_id, kind, public_key, public_key_id, key_security_level)
+         values ($1, $2, 'headset', $3, $4, $5)`,
+        [
+          deviceId,
+          session.user_id,
+          session.headset_public_key,
+          session.headset_public_key_id,
+          session.headset_key_security_level,
+        ],
+      );
+
+      // The single statement that makes concurrent redemption safe: two
+      // requests that both verified a genuinely valid signature — the
+      // ordinary shape of a race, and also what a replayed signature looks
+      // like — can both reach this line, but only one `UPDATE` can match a
+      // row still `pending`. The other affects zero rows and rolls back,
+      // undoing only the device row it just inserted.
+      const updated = await client.query<{ readonly id: string }>(
+        `update pairing_sessions
+            set status = 'redeemed', redeemed_at = now(), redeemed_by_device_id = $2
+          where id = $1
+            and status = 'pending'
+            and expires_at > now()
+          returning id`,
+        [session.id, deviceId],
+      );
+
+      if (updated.rows.length === 0) {
+        await client.query('rollback');
+        return fail();
+      }
+
+      await client.query('commit');
+      return { ok: true, deviceId };
+    } catch (error) {
+      await client.query('rollback').catch(() => {
+        // The transaction may already be aborted by the error above.
+      });
+
+      // A live headset with this exact key already exists and was never
+      // revoked (`devices_live_key_idx`). Reachable only if the same
+      // enrolment key was somehow redeemed before without being revoked
+      // first — treated as an ordinary redemption failure, not a crash.
+      if ((error as { readonly code?: string }).code === '23505') return fail();
       throw error;
     } finally {
       client.release();
