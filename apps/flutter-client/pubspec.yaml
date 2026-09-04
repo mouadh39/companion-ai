@@ -1,0 +1,44 @@
+name: nexa_client
+description: The Nexa mobile client — the gateway to account, Nexa, memory and devices.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  flutter_secure_storage: ^10.3.1
+  qr: ^3.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  zxing2: ^0.2.3
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/marks/
+    - assets/devices/
+
+  # Satoshi is the brand face (Fontshare, not Google Fonts), and its licence is
+  # not ours to vendor — so the files are not in this repo. Drop the four .otf
+  # weights into assets/fonts/, uncomment this block, and flip
+  # NexaType.fontFamily in lib/theme/nexa_typography.dart to 'Satoshi'.
+  #
+  # fonts:
+  #   - family: Satoshi
+  #     fonts:
+  #       - asset: assets/fonts/Satoshi-Light.otf
+  #         weight: 300
+  #       - asset: assets/fonts/Satoshi-Regular.otf
+  #         weight: 400
+  #       - asset: assets/fonts/Satoshi-Medium.otf
+  #         weight: 500
+  #       - asset: assets/fonts/Satoshi-Bold.otf
+  #         weight: 700
