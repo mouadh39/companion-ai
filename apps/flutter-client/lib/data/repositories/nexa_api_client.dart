@@ -91,6 +91,42 @@ class NexaApiClient {
     return _decode(response);
   }
 
+  /// Sends a JSON GET to `baseUrl` + [path].
+  ///
+  /// Same contract as [postJson] in every way that overlaps — [bearerToken]
+  /// becomes the `Authorization` header, the same [NexaApiException] kinds
+  /// come back for the same failures, decoded through the same [_decode] —
+  /// except there is no request body to send, because a GET carries none.
+  Future<Map<String, dynamic>> getJson(
+    String path, {
+    String? bearerToken,
+    Map<String, String>? extraHeaders,
+  }) async {
+    final uri = baseUrl.resolve(path);
+    final headers = <String, String>{
+      'accept': 'application/json',
+      if (bearerToken != null) 'authorization': 'Bearer $bearerToken',
+      if (extraHeaders != null) ...extraHeaders,
+    };
+
+    late final http.Response response;
+    try {
+      response = await _http.get(uri, headers: headers).timeout(timeout);
+    } on TimeoutException {
+      throw const NexaApiException(
+        NexaApiFailureKind.timeout,
+        'Nexa took too long to respond.',
+      );
+    } on http.ClientException {
+      throw const NexaApiException(
+        NexaApiFailureKind.network,
+        "Couldn't reach Nexa. Check your connection.",
+      );
+    }
+
+    return _decode(response);
+  }
+
   Map<String, dynamic> _decode(http.Response response) {
     final status = response.statusCode;
 

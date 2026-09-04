@@ -204,4 +204,64 @@ void main() {
       throwsA(isA<NexaApiException>().having((e) => e.kind, 'kind', NexaApiFailureKind.timeout)),
     );
   });
+
+  group('getJson', () {
+    test('sends a real GET, not a POST', () async {
+      http.Request? seen;
+      final client = NexaApiClient(
+        baseUrl: baseUrl,
+        httpClient: MockClient((request) async {
+          seen = request;
+          return http.Response(jsonEncode({'ok': true}), 200);
+        }),
+      );
+
+      final body = await client.getJson('/v1/thing');
+
+      expect(seen!.method, 'GET');
+      expect(body, {'ok': true});
+    });
+
+    test('sends no request body', () async {
+      http.Request? seen;
+      final client = NexaApiClient(
+        baseUrl: baseUrl,
+        httpClient: MockClient((request) async {
+          seen = request;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      await client.getJson('/v1/thing');
+
+      expect(seen!.body, isEmpty);
+    });
+
+    test('a bearer token becomes the Authorization header, same as postJson', () async {
+      http.Request? seen;
+      final client = NexaApiClient(
+        baseUrl: baseUrl,
+        httpClient: MockClient((request) async {
+          seen = request;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      await client.getJson('/v1/thing', bearerToken: 'a-token');
+
+      expect(seen!.headers['authorization'], 'Bearer a-token');
+    });
+
+    test('a non-2xx response raises NexaApiException, same mapping as postJson', () async {
+      final client = NexaApiClient(
+        baseUrl: baseUrl,
+        httpClient: MockClient((request) async => http.Response('{}', 404)),
+      );
+
+      await expectLater(
+        client.getJson('/v1/thing'),
+        throwsA(isA<NexaApiException>()),
+      );
+    });
+  });
 }

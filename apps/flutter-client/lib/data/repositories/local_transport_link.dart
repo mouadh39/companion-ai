@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import '../models/headset_advertisement.dart';
 import 'device_link_service.dart';
+import 'lan_discovery_socket.dart' show LanTransportMessage;
 import 'pairing.dart';
 import 'pairing_lan_envelope.dart';
 
@@ -55,38 +56,40 @@ abstract final class HeadsetAdvertisementCodec {
 ///
 /// A concrete transport — LAN today; see the report for why, and for what
 /// BLE would need before it could be considered — supplies [openMessages],
-/// a function returning a fresh `Stream<String>` of whatever it received
-/// (one already-decoded-from-bytes-to-text payload per event; turning
-/// datagrams or GATT writes into UTF-8 strings is the one thing this class
-/// asks of its transport and the only thing a transport needs to provide).
-/// This class owns everything after that: filtering by which device the
-/// caller actually asked for, deciding when enough time has passed with no
-/// match to call it failed, and shaping every step into the same
-/// [PairingProgress] stream [LocalDeviceLinkService] already produces —
-/// screens written against [DeviceLinkService] do not need to know which
-/// implementation they are holding.
+/// a function returning a fresh `Stream<LanTransportMessage>` of whatever
+/// it received (one already-decoded-from-bytes-to-text payload per event,
+/// paired with who sent it; turning datagrams or GATT writes into that
+/// shape is the one thing this class asks of its transport and the only
+/// thing a transport needs to provide). This class owns everything after
+/// that: filtering by which device the caller actually asked for, deciding
+/// when enough time has passed with no match to call it failed, carrying
+/// the matched sender's address forward as a [HeadsetLanEndpoint] (transport
+/// information only — see that type's own doc), and shaping every step into
+/// the same [PairingProgress] stream [LocalDeviceLinkService] already
+/// produces — screens written against [DeviceLinkService] do not need to
+/// know which implementation they are holding.
 ///
 /// ## Why tests do not need a separate fake transport
 ///
 /// [openMessages] is exactly the seam a test needs: feeding this class a
-/// controlled `Stream<String>` exercises the *real* protocol-handling logic
-/// — matching, timing out, rejecting a malformed or wrong-device message —
-/// with no socket, no platform channel, and no real transport of any kind
-/// involved. A parallel fake implementation of [DeviceLinkService] would
-/// only risk drifting from what this class actually does; injecting the
-/// message source instead means there is exactly one implementation to get
-/// right.
+/// controlled `Stream<LanTransportMessage>` exercises the *real*
+/// protocol-handling logic — matching, timing out, rejecting a malformed or
+/// wrong-device message — with no socket, no platform channel, and no real
+/// transport of any kind involved. A parallel fake implementation of
+/// [DeviceLinkService] would only risk drifting from what this class
+/// actually does; injecting the message source instead means there is
+/// exactly one implementation to get right.
 class LocalTransportPairingLink implements DeviceLinkService {
   LocalTransportPairingLink({
-    required Stream<String> Function() openMessages,
+    required Stream<LanTransportMessage> Function() openMessages,
     this.timeout = const Duration(seconds: 30),
   }) : _openMessages = openMessages;
 
-  final Stream<String> Function() _openMessages;
+  final Stream<LanTransportMessage> Function() _openMessages;
   final Duration timeout;
 
   StreamController<PairingProgress>? _controller;
-  StreamSubscription<String>? _subscription;
+  StreamSubscription<LanTransportMessage>? _subscription;
   Timer? _timeoutTimer;
 
   @override
@@ -118,10 +121,10 @@ class LocalTransportPairingLink implements DeviceLinkService {
       controller.close();
     });
 
-    _subscription = _openMessages().listen((raw) {
+    _subscription = _openMessages().listen((received) {
       if (controller.isClosed) return;
 
-      final advertisement = HeadsetAdvertisementCodec.decode(raw);
+      final advertisement = HeadsetAdvertisementCodec.decode(received.text);
       // Malformed, or genuinely not one of ours — see the codec's own doc.
       // Never surfaced to the UI as a failure: plenty of local-network
       // traffic is neither, and one bad packet must not read as "the
@@ -132,6 +135,10 @@ class LocalTransportPairingLink implements DeviceLinkService {
       // whose own name does not match what this call is looking for is
       // exactly the same as silence, from this stream's point of view —
       // it is evidence of some *other* headset, not a failure of this one.
+      // This is also what keeps this class safe with several headsets on
+      // the same network at once: each one's advertisement is judged and
+      // (if matched) addressed entirely on its own, so a second, unrelated
+      // headset's traffic can never be attributed to this call's device.
       if (deviceName != null && advertisement.deviceName != deviceName) {
         return;
       }
@@ -148,6 +155,10 @@ class LocalTransportPairingLink implements DeviceLinkService {
           phase: PairingPhase.connected,
           message: 'Connected to $name.',
           enrolmentHandle: advertisement.enrolmentHandle,
+          headsetEndpoint: HeadsetLanEndpoint(
+            host: received.senderAddress.address,
+            port: received.senderPort,
+          ),
         ),
       );
       controller.close();

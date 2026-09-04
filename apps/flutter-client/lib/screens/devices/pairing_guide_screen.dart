@@ -115,6 +115,20 @@ class _PairingGuideScreenState extends State<PairingGuideScreen> {
           if (!mounted) return;
           setState(() => _linkMessage = p.message);
           state.setPairingPhase(p.phase);
+
+          // The one place a discovered headset's enrolment handle and LAN
+          // address are carried out of the link stream and into state where
+          // the code-issuing step can actually reach them — see
+          // HeadsetPairingContext's own doc on why this does not happen
+          // automatically inside setPairingPhase itself.
+          if (p.phase == PairingPhase.connected && p.enrolmentHandle != null) {
+            state.setPairingContext(
+              HeadsetPairingContext(
+                enrolmentHandle: p.enrolmentHandle!,
+                headsetEndpoint: p.headsetEndpoint,
+              ),
+            );
+          }
         });
   }
 

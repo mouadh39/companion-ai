@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:nexa_client/data/models/api_failure.dart';
+import 'package:nexa_client/data/models/pairing_api.dart';
 import 'package:nexa_client/data/repositories/nexa_api_client.dart';
 import 'package:nexa_client/data/repositories/nexa_backend.dart';
 
@@ -128,6 +129,77 @@ void main() {
 
       expect(session.pairingSessionId, 'sess-1');
       expect(session.code, 'NX2.abc123');
+    });
+  });
+
+  group('getPairingSessionStatus', () {
+    test('GETs /v1/pairing-sessions/:id/status with the bearer token', () async {
+      final h = _harness((r) async => _ok({'status': 'pending', 'deviceId': null}));
+
+      final status = await h.backend.getPairingSessionStatus(
+        bearerToken: 'phone-token',
+        pairingSessionId: 'sess-1',
+      );
+
+      final request = await h.lastRequest();
+      expect(request.method, 'GET');
+      expect(request.url.path, '/v1/pairing-sessions/sess-1/status');
+      expect(request.headers['authorization'], 'Bearer phone-token');
+
+      expect(status.status, PairingSessionStatusValue.pending);
+      expect(status.deviceId, isNull);
+    });
+
+    test('a redeemed status carries the headset device id', () async {
+      final h = _harness((r) async => _ok({'status': 'redeemed', 'deviceId': 'headset-1'}));
+
+      final status = await h.backend.getPairingSessionStatus(
+        bearerToken: 'phone-token',
+        pairingSessionId: 'sess-1',
+      );
+
+      expect(status.status, PairingSessionStatusValue.redeemed);
+      expect(status.deviceId, 'headset-1');
+    });
+
+    test('expired and cancelled both parse to their own distinct values', () async {
+      final expiredHarness = _harness((r) async => _ok({'status': 'expired', 'deviceId': null}));
+      expect(
+        (await expiredHarness.backend.getPairingSessionStatus(bearerToken: 't', pairingSessionId: 's')).status,
+        PairingSessionStatusValue.expired,
+      );
+
+      final cancelledHarness = _harness((r) async => _ok({'status': 'cancelled', 'deviceId': null}));
+      expect(
+        (await cancelledHarness.backend.getPairingSessionStatus(bearerToken: 't', pairingSessionId: 's')).status,
+        PairingSessionStatusValue.cancelled,
+      );
+    });
+
+    test('an unrecognised status value is treated as pending, never as paired', () async {
+      final h = _harness((r) async => _ok({'status': 'some_future_value', 'deviceId': null}));
+
+      final status = await h.backend.getPairingSessionStatus(bearerToken: 't', pairingSessionId: 's');
+
+      expect(status.status, PairingSessionStatusValue.pending);
+    });
+
+    test('a session id is percent-encoded into the path', () async {
+      final h = _harness((r) async => _ok({'status': 'pending', 'deviceId': null}));
+
+      await h.backend.getPairingSessionStatus(bearerToken: 't', pairingSessionId: 'a b/c');
+
+      final request = await h.lastRequest();
+      expect(request.url.path, contains('a%20b%2Fc'));
+    });
+
+    test('a 404 (not mine, or does not exist) raises NexaApiException', () async {
+      final h = _harness((r) async => _ok({'error': 'not_found', 'message': 'nope'}, 404));
+
+      await expectLater(
+        h.backend.getPairingSessionStatus(bearerToken: 't', pairingSessionId: 's'),
+        throwsA(isA<NexaApiException>()),
+      );
     });
   });
 

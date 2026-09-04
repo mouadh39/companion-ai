@@ -78,4 +78,29 @@ class PairingSessionRepository {
       enrolmentHandle: enrolmentHandle,
     );
   }
+
+  /// Checks a session this phone created against
+  /// `GET /v1/pairing-sessions/:id/status` — the only authoritative way this
+  /// app can ever learn a headset actually redeemed. Never call this with a
+  /// [pairingSessionId] this account did not create; the backend answers
+  /// "not found" identically whether the session never existed or belongs to
+  /// someone else, so there is nothing useful to learn by trying one that
+  /// is not this account's own.
+  ///
+  /// Throws the same [NotAuthenticatedException] / [BackendNotConfiguredException]
+  /// as [createPairingSession] for the same reasons, and [NexaApiException]
+  /// for anything the backend itself refuses (including a 404 for an id that
+  /// is not this account's).
+  Future<PairingSessionStatus> getStatus(String pairingSessionId) async {
+    final backend = _backend;
+    if (backend == null) throw const BackendNotConfiguredException();
+
+    final token = await _tokens.validAccessToken();
+    if (token == null) throw const NotAuthenticatedException();
+
+    return backend.getPairingSessionStatus(
+      bearerToken: token,
+      pairingSessionId: pairingSessionId,
+    );
+  }
 }

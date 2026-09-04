@@ -148,6 +148,45 @@ class DeviceCredentials {
   final int expiresIn;
 }
 
+/// The four states `GET /v1/pairing-sessions/:id/status` can report —
+/// exactly `PairingSessionStatusValue` on the backend
+/// (`apps/backend/src/devices/pairing-sessions.ts`), minus `failed`, which
+/// nothing on the backend writes yet (see that type's own doc). Kept as its
+/// own enum, not a bare `String`, so an unrecognised value the backend might
+/// send in the future fails to parse rather than being silently treated as
+/// one of these four.
+enum PairingSessionStatusValue { pending, redeemed, expired, cancelled }
+
+/// What this phone is authoritatively told about its own pairing attempt —
+/// the only source of truth for whether a headset actually redeemed. Never
+/// carries a code, a key, or a credential of any kind; see the backend
+/// route's own doc on why the response is exactly two fields.
+class PairingSessionStatus {
+  const PairingSessionStatus({required this.status, this.deviceId});
+
+  factory PairingSessionStatus.fromJson(Map<String, dynamic> json) =>
+      PairingSessionStatus(
+        status: _parseStatus(json['status']),
+        deviceId: json['deviceId'] as String?,
+      );
+
+  final PairingSessionStatusValue status;
+
+  /// The headset's own device id, once [status] is
+  /// [PairingSessionStatusValue.redeemed]. `null` before then.
+  final String? deviceId;
+
+  static PairingSessionStatusValue _parseStatus(Object? raw) {
+    for (final value in PairingSessionStatusValue.values) {
+      if (value.name == raw) return value;
+    }
+    // A value this app does not recognise (backend `failed`, or a genuinely
+    // new future state) is treated as still pending — the safe direction is
+    // "keep waiting," never "assume paired."
+    return PairingSessionStatusValue.pending;
+  }
+}
+
 /// What `POST /v1/pairing-sessions/redeem` returns on success: a
 /// [DeviceCredentials] plus the `deviceId` the headset was just registered
 /// under, and the `paired: true` flag the backend always sends alongside it.

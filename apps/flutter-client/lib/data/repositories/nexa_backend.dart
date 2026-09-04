@@ -92,6 +92,23 @@ class NexaBackend {
     return PairingSession.fromJson(json);
   }
 
+  /// `GET /v1/pairing-sessions/:id/status` — the phone's only authoritative
+  /// way to learn a headset actually redeemed. Never call this speculatively
+  /// with an id this account did not create: the backend answers "not
+  /// found" for a session that exists but belongs to someone else exactly
+  /// as it does for one that never existed at all, by design — see the
+  /// route's own doc.
+  Future<PairingSessionStatus> getPairingSessionStatus({
+    required String bearerToken,
+    required String pairingSessionId,
+  }) async {
+    final json = await _client.getJson(
+      '/v1/pairing-sessions/${Uri.encodeComponent(pairingSessionId)}/status',
+      bearerToken: bearerToken,
+    );
+    return PairingSessionStatus.fromJson(json);
+  }
+
   /// `POST /v1/pairing-sessions/redeem` — unauthenticated. A headset
   /// presents the code it read and a signature proving it holds the private
   /// key that key's enrolment was published for.

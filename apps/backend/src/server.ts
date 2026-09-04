@@ -490,6 +490,71 @@ export const buildServer = (app: Application, config: AppConfig): FastifyInstanc
   });
 
   /**
+   * An authenticated phone checks a session it created — the only
+   * authoritative way it can ever learn a headset actually redeemed, since
+   * `POST /v1/pairing-sessions/redeem` itself is an unauthenticated,
+   * headset-only call this phone is never party to. Polled, not pushed: no
+   * new infrastructure, a plain GET against the same authenticated-phone
+   * boundary `POST /v1/pairing-sessions` already uses.
+   *
+   * ## What this route must never do
+   *
+   * The response has exactly two fields, `status` and `deviceId`. No code,
+   * no code hash, no public key, no signature, no access token, no refresh
+   * token, no private key (which this process never holds in the first
+   * place) — none of that is this route's to carry, the same standard
+   * every other pairing response in this file already holds itself to.
+   *
+   * ## Why "not mine" and "does not exist" read identically
+   *
+   * `PairingSessionStore.getStatus` reports `not_found` for both, and this
+   * route answers both with the same 404 — see that method's own doc.
+   * Distinguishing them would hand a caller an existence oracle over
+   * sessions, and therefore pairing attempts, it has no claim to.
+   */
+  server.get('/v1/pairing-sessions/:pairingSessionId/status', async (request, reply) => {
+    const authentication = await authenticate(app, request);
+    if (!authentication.ok) {
+      return reply
+        .code(authentication.status)
+        .send({ error: authentication.error, message: authentication.message });
+    }
+
+    const params = request.params as { readonly pairingSessionId?: unknown };
+
+    // A malformed id (missing, empty, or absurdly long) is refused before it
+    // ever reaches a store lookup — the same cheap-guard-first shape
+    // `PairingCodeValidator.MaxLength` documents on the Unity/headset side
+    // for the same reason: refuse what plainly cannot be genuine before
+    // spending a query on it.
+    if (!isNonEmptyString(params.pairingSessionId) || params.pairingSessionId.length > 128) {
+      return reply.code(400).send({
+        error: 'invalid_request',
+        message: 'A valid pairing session id is required.',
+      });
+    }
+
+    const result = await app.pairingSessions.getStatus({
+      pairingSessionId: params.pairingSessionId,
+      userId: authentication.identity.userId,
+    });
+
+    if (!result.ok) {
+      // Deliberately identical whether the id is simply wrong or belongs to
+      // someone else — see the route's own doc.
+      return reply.code(404).send({
+        error: 'not_found',
+        message: 'No pairing session found for this account.',
+      });
+    }
+
+    return reply.code(200).send({
+      status: result.info.status,
+      deviceId: result.info.deviceId,
+    });
+  });
+
+  /**
    * A headset publishes the public half of a key it generated itself.
    *
    * ## Why this is unauthenticated, deliberately

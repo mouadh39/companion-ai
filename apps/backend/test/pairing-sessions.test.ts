@@ -163,6 +163,22 @@ interface RedeemResponseBody {
   readonly expiresIn: number;
 }
 
+const statusOf = (
+  server: ReturnType<typeof buildServer>,
+  token: string | null,
+  pairingSessionId: string,
+) =>
+  server.inject({
+    method: 'GET',
+    url: `/v1/pairing-sessions/${encodeURIComponent(pairingSessionId)}/status`,
+    ...(token === null ? {} : { headers: { authorization: `Bearer ${token}` } }),
+  });
+
+interface StatusResponseBody {
+  readonly status: string;
+  readonly deviceId: string | null;
+}
+
 /** A fresh EC P-256 keypair, plus its SPKI exactly as a headset would submit it. */
 const freshP256KeyPair = (): { readonly privateKey: KeyObject; readonly publicKeyBase64: string } => {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -216,6 +232,8 @@ const livePairingSession = async (server: ReturnType<typeof buildServer>, user: 
     secret,
     userId: user,
     phoneDeviceId,
+    /** This phone's own bearer token — the credential the status endpoint checks. */
+    token,
     /** Signs the correct challenge for this exact session with this exact key. */
     correctSignature: (): Buffer => signChallenge(privateKey, session.pairingSessionId, secret, parsed.keyId),
   };
@@ -632,6 +650,204 @@ describe('redeeming a session with a genuine proof of possession', () => {
     const claims = decodeJwtPayload(body.accessToken);
     expect(claims.sub).toBe(ALICE);
     expect(claims.aud).toBe('nexa-device');
+  });
+});
+
+describe('checking a pairing session\'s status — the phone\'s authoritative signal', () => {
+  it('refuses an unauthenticated request', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server);
+
+    const response = await statusOf(server, null, fixture.session.pairingSessionId);
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('reports pending for a freshly created, unredeemed session', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server, ALICE);
+
+    const response = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+
+    expect(response.statusCode).toBe(200);
+    const body = json<StatusResponseBody>(response);
+    expect(body.status).toBe('pending');
+    expect(body.deviceId).toBeNull();
+  });
+
+  it('reports redeemed, with the headset device id, after a genuine redemption', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server, ALICE);
+
+    const redemption = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+    expect(redemption.statusCode).toBe(200);
+    const redeemed = json<RedeemResponseBody>(redemption);
+
+    const response = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+
+    expect(response.statusCode).toBe(200);
+    const body = json<StatusResponseBody>(response);
+    expect(body.status).toBe('redeemed');
+    expect(body.deviceId).toBe(redeemed.deviceId);
+  });
+
+  it('reports expired for a session past its own TTL, never redeemed', async () => {
+    let now = new Date('2026-09-03T00:00:00.000Z');
+    const devices = new InMemoryDeviceStore();
+    const enrolments = new InMemoryEnrolmentStore();
+    const deviceTokens = new InMemoryDeviceTokenStore(devices, DEVICE_TOKEN_SECRET, () => now);
+    const pairingSessions = new InMemoryPairingSessionStore(
+      enrolments,
+      devices,
+      deviceTokens,
+      DEVICE_TOKEN_SECRET,
+      undefined,
+      undefined,
+      () => now,
+    );
+    const { server } = harness({ devices, enrolments, pairingSessions, deviceTokens });
+    const fixture = await livePairingSession(server, ALICE);
+
+    now = new Date(now.getTime() + 3 * 60 * 1000); // past the 2-minute TTL, never redeemed
+
+    const response = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+
+    expect(response.statusCode).toBe(200);
+    const body = json<StatusResponseBody>(response);
+    expect(body.status).toBe('expired');
+    expect(body.deviceId).toBeNull();
+  });
+
+  it('a session that redeemed before expiring stays redeemed, never reported expired', async () => {
+    let now = new Date('2026-09-03T00:00:00.000Z');
+    const devices = new InMemoryDeviceStore();
+    const enrolments = new InMemoryEnrolmentStore();
+    const deviceTokens = new InMemoryDeviceTokenStore(devices, DEVICE_TOKEN_SECRET, () => now);
+    const pairingSessions = new InMemoryPairingSessionStore(
+      enrolments,
+      devices,
+      deviceTokens,
+      DEVICE_TOKEN_SECRET,
+      undefined,
+      undefined,
+      () => now,
+    );
+    const { server } = harness({ devices, enrolments, pairingSessions, deviceTokens });
+    const fixture = await livePairingSession(server, ALICE);
+
+    const redemption = await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+    expect(redemption.statusCode).toBe(200);
+
+    now = new Date(now.getTime() + 3 * 60 * 1000); // well past the TTL
+
+    const response = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+    expect(json<StatusResponseBody>(response).status).toBe('redeemed');
+  });
+
+  it('cross-user access is refused — a different account gets the same 404 as a nonexistent session', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server, ALICE);
+    const { token: bobToken } = await registeredPhone(server, BOB);
+
+    const asOwner = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+    const asStranger = await statusOf(server, bobToken, fixture.session.pairingSessionId);
+    const nonexistent = await statusOf(server, bobToken, 'no-such-session-id-at-all');
+
+    expect(asOwner.statusCode).toBe(200);
+    expect(asStranger.statusCode).toBe(404);
+    expect(nonexistent.statusCode).toBe(404);
+    // Identical response shape for "not mine" and "does not exist" — no
+    // existence oracle. See the route's own doc.
+    expect(asStranger.json()).toEqual(nonexistent.json());
+  });
+
+  it('a nonexistent session id for the caller\'s own account is 404, not a crash', async () => {
+    const { server } = harness();
+    const { token } = await registeredPhone(server, ALICE);
+
+    const response = await statusOf(server, token, 'totally-made-up-id');
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('rejects an empty pairing session id segment', async () => {
+    const { server } = harness();
+    const { token } = await registeredPhone(server, ALICE);
+
+    // A trailing slash with nothing after it collapses to the bare
+    // collection route on most routers; Fastify treats it as no match
+    // (404) rather than an empty param — either is an acceptable, safe
+    // refusal, so this only pins that it is never a 200 or a 500.
+    const response = await server.inject({
+      method: 'GET',
+      url: '/v1/pairing-sessions//status',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).not.toBe(200);
+    expect(response.statusCode).toBeLessThan(500);
+  });
+
+  it('rejects an absurdly long pairing session id without ever reaching the store', async () => {
+    const { server } = harness();
+    const { token } = await registeredPhone(server, ALICE);
+
+    const response = await statusOf(server, token, 'x'.repeat(500));
+
+    // 400 is this route's own length guard; 414 is the HTTP layer refusing
+    // an oversized URI before the handler ever runs at all. Either is a
+    // safe rejection — what matters is it is never a 200 or a 500.
+    expect([400, 414]).toContain(response.statusCode);
+  });
+
+  it('the response carries no code, no key material, no signature, and no token of any kind', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server, ALICE);
+    await redeem(server, {
+      code: fixture.session.code,
+      signature: fixture.correctSignature().toString('base64'),
+    });
+
+    const response = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+    const raw = response.body;
+
+    for (const forbidden of [
+      fixture.session.code,
+      fixture.secret,
+      fixture.keyId,
+      'accessToken',
+      'refreshToken',
+      'signature',
+      'publicKey',
+      'privateKey',
+    ]) {
+      expect(raw).not.toContain(forbidden);
+    }
+    // The whole point of the route: exactly two fields, nothing else.
+    expect(Object.keys(json<Record<string, unknown>>(response)).sort()).toEqual(['deviceId', 'status']);
+  });
+
+  it('rejects a token signed with the wrong secret, exactly like every other authenticated route', async () => {
+    const { server } = harness();
+    const fixture = await livePairingSession(server, ALICE);
+
+    const wrongToken = await new SignJWT({})
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(ALICE)
+      .setAudience('authenticated')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode('a-completely-different-secret-0123456789ab'));
+
+    const response = await statusOf(server, wrongToken, fixture.session.pairingSessionId);
+
+    expect(response.statusCode).toBe(401);
   });
 });
 

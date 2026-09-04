@@ -102,6 +102,48 @@ export type RedeemPairingSessionResult =
   | { readonly ok: true; readonly redeemed: RedeemedPairingSession }
   | { readonly ok: false; readonly reason: 'redemption_invalid' };
 
+/**
+ * A session's state as reported to the account that created it — never to
+ * anyone else. Matches `pairing_sessions_status_check`'s own vocabulary
+ * exactly, plus the one value that check constraint permits but nothing
+ * today ever writes: `expired` is computed at read time from `expires_at`,
+ * the same way `redeem` itself already treats expiry, rather than requiring
+ * a background job to flip a stored value the instant a session's TTL
+ * passes.
+ */
+export type PairingSessionStatusValue = 'pending' | 'redeemed' | 'expired' | 'cancelled' | 'failed';
+
+export interface PairingSessionStatusInput {
+  /** Not yet known to be a real id, or to belong to this caller — see `getStatus`. */
+  readonly pairingSessionId: string;
+  /** From the verified caller's token — never a claim the request could make. */
+  readonly userId: UserId;
+}
+
+/**
+ * Exactly what a phone is owed about its own pairing attempt, and nothing a
+ * headset's identity, a signature, or a credential could be reconstructed
+ * from. See `getStatus`'s own doc for the full reasoning.
+ */
+export interface PairingSessionStatusInfo {
+  readonly status: PairingSessionStatusValue;
+  /** The headset's own device id once `status` is `redeemed`; `null` before then. */
+  readonly deviceId: DeviceId | null;
+}
+
+/**
+ * `not_found` is the single failure this reports, deliberately covering both
+ * "no such session" and "a session that exists but belongs to a different
+ * account" — the same reasoning every other lookup in this module already
+ * documents (`create`'s `enrolment_invalid`, `redeem`'s
+ * `redemption_invalid`): distinguishing "not yours" from "does not exist"
+ * would hand a caller an existence oracle over sessions, and therefore
+ * pairing attempts, it has no claim to.
+ */
+export type GetPairingSessionStatusResult =
+  | { readonly ok: true; readonly info: PairingSessionStatusInfo }
+  | { readonly ok: false; readonly reason: 'not_found' };
+
 export interface PairingSessionStore {
   /**
    * Resolve an enrolment handle and, if it is genuinely live, consume it and
@@ -132,6 +174,19 @@ export interface PairingSessionStore {
    * Creates no companion binding.
    */
   redeem(input: RedeemPairingSessionInput): Promise<RedeemPairingSessionResult>;
+
+  /**
+   * Reports a session's state to the account that created it — the only
+   * authoritative way a phone can ever learn that its headset actually
+   * redeemed, since `redeem` itself is an unauthenticated, headset-only call
+   * this phone is never party to.
+   *
+   * Ownership is checked as part of the same lookup that finds the row, not
+   * as a separate step afterward — see each implementation's own query —
+   * so there is no window in which a session's existence is confirmed before
+   * its ownership is.
+   */
+  getStatus(input: PairingSessionStatusInput): Promise<GetPairingSessionStatusResult>;
 }
 
 /** Long enough to hold a code on screen; short enough that leaving it up costs little. */
@@ -288,6 +343,36 @@ export class InMemoryPairingSessionStore implements PairingSessionStore {
       },
     };
   }
+
+  async getStatus(input: PairingSessionStatusInput): Promise<GetPairingSessionStatusResult> {
+    const row = this.#sessions.get(input.pairingSessionId);
+
+    // Ownership checked as part of the same lookup, not after it — a row
+    // that exists but belongs to someone else is indistinguishable here
+    // from one that does not exist at all. See the interface's own doc.
+    if (row === undefined || row.userId !== input.userId) return { ok: false, reason: 'not_found' };
+
+    return {
+      ok: true,
+      info: {
+        status: this.#effectiveStatus(row),
+        deviceId: row.redeemedByDeviceId,
+      },
+    };
+  }
+
+  /**
+   * `expired` is never stored — see `PairingSessionStatusValue`'s own doc —
+   * so a `pending` row past its own `expiresAt` is reported as `expired`
+   * here, computed fresh on every read, the same way `redeem` itself already
+   * treats expiry rather than trusting a stale stored value.
+   */
+  #effectiveStatus(row: SessionRow): PairingSessionStatusValue {
+    if (row.status === 'pending' && row.expiresAt.getTime() <= this.#now().getTime()) {
+      return 'expired';
+    }
+    return row.status;
+  }
 }
 
 /**
@@ -307,6 +392,10 @@ export class DenyAllPairingSessionStore implements PairingSessionStore {
 
   async redeem(): Promise<RedeemPairingSessionResult> {
     return { ok: false, reason: 'redemption_invalid' };
+  }
+
+  async getStatus(): Promise<GetPairingSessionStatusResult> {
+    return { ok: false, reason: 'not_found' };
   }
 }
 
@@ -603,5 +692,42 @@ export class PgPairingSessionStore implements PairingSessionStore {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Ownership enforced in the `where` clause itself — `id = $1 and
+   * user_id = $2` — rather than fetched then checked, so a row belonging to
+   * a different account never surfaces as a distinguishable "found, but not
+   * yours" outcome even one query earlier than the response. See the
+   * interface's own doc.
+   */
+  async getStatus(input: PairingSessionStatusInput): Promise<GetPairingSessionStatusResult> {
+    const found = await this.#pool.query<{
+      readonly status: string;
+      readonly expires_at: Date;
+      readonly redeemed_by_device_id: string | null;
+    }>(
+      `select status, expires_at, redeemed_by_device_id
+         from pairing_sessions
+        where id = $1
+          and user_id = $2`,
+      [input.pairingSessionId, input.userId],
+    );
+
+    const row = found.rows[0];
+    if (row === undefined) return { ok: false, reason: 'not_found' };
+
+    const status: PairingSessionStatusValue =
+      row.status === 'pending' && row.expires_at.getTime() <= Date.now()
+        ? 'expired'
+        : (row.status as PairingSessionStatusValue);
+
+    return {
+      ok: true,
+      info: {
+        status,
+        deviceId: row.redeemed_by_device_id === null ? null : trustExternalId<DeviceId>(row.redeemed_by_device_id),
+      },
+    };
   }
 }

@@ -2,6 +2,27 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+/// One datagram [LanDiscoverySocket] accepted past its own guards, decoded
+/// to text, together with who sent it.
+///
+/// The sender's address and port are transport information only — see
+/// `HeadsetLanEndpoint` in `pairing.dart` for the full reasoning on why a
+/// UDP source address must never be treated as proof of anything. They are
+/// carried here purely so a caller that wants to reply (send a
+/// `pairing_context` message back to the headset that is expecting one) has
+/// somewhere to address it — see [LanDiscoverySocket.send].
+class LanTransportMessage {
+  const LanTransportMessage({
+    required this.text,
+    required this.senderAddress,
+    required this.senderPort,
+  });
+
+  final String text;
+  final InternetAddress senderAddress;
+  final int senderPort;
+}
+
 /// A real UDP socket carrying Nexa's local pairing traffic — the transport
 /// [LocalTransportPairingLink] interprets, and the thing that did not exist
 /// before this step (see the report on why 3F-E deliberately stopped short
@@ -66,7 +87,7 @@ class LanDiscoverySocket {
   final Duration dedupWindow;
 
   RawDatagramSocket? _socket;
-  StreamController<String>? _controller;
+  StreamController<LanTransportMessage>? _controller;
   final Map<String, DateTime> _recentDigests = {};
 
   /// Whether [open] has succeeded and [close] has not since been called.
@@ -92,7 +113,7 @@ class LanDiscoverySocket {
     socket.broadcastEnabled = true;
     _socket = socket;
 
-    final controller = StreamController<String>();
+    final controller = StreamController<LanTransportMessage>();
     _controller = controller;
 
     socket.listen(
@@ -103,7 +124,11 @@ class LanDiscoverySocket {
     );
   }
 
-  void _handleEvent(RawDatagramSocket socket, StreamController<String> controller, RawSocketEvent event) {
+  void _handleEvent(
+    RawDatagramSocket socket,
+    StreamController<LanTransportMessage> controller,
+    RawSocketEvent event,
+  ) {
     if (event != RawSocketEvent.read) return;
 
     // A single `read` event only means "at least one datagram is waiting" —
@@ -119,7 +144,7 @@ class LanDiscoverySocket {
     }
   }
 
-  void _handleDatagram(StreamController<String> controller, Datagram datagram) {
+  void _handleDatagram(StreamController<LanTransportMessage> controller, Datagram datagram) {
     // Hostile-network guard, first: refuse anything too large to plausibly
     // be a genuine message before spending any more work on it.
     if (datagram.data.length > maxDatagramBytes) return;
@@ -136,17 +161,21 @@ class LanDiscoverySocket {
       return; // not even valid UTF-8 — hostile or corrupt, dropped silently
     }
 
-    if (!controller.isClosed) controller.add(text);
+    if (!controller.isClosed) {
+      controller.add(
+        LanTransportMessage(text: text, senderAddress: datagram.address, senderPort: datagram.port),
+      );
+    }
   }
 
-  /// The decoded-to-`String` stream of every datagram this socket has
-  /// accepted past its own guards — exactly the shape
+  /// The stream of every datagram this socket has accepted past its own
+  /// guards, decoded to text and paired with its sender — exactly the shape
   /// `LocalTransportPairingLink`'s `openMessages` seam expects. Throws
   /// [StateError] if called before [open] has ever succeeded; a caller that
   /// wants a fresh stream after a reconnect calls [open] again and reads
   /// this again, the same pattern `LocalTransportPairingLink` itself uses
   /// for its own `openMessages` callback.
-  Stream<String> get messages {
+  Stream<LanTransportMessage> get messages {
     final controller = _controller;
     if (controller == null) {
       throw StateError('LanDiscoverySocket.messages was read before open() succeeded.');

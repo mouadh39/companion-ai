@@ -192,6 +192,13 @@ class NexaAppState extends ChangeNotifier {
   int _pairStep = 0;
   PairingPhase _pairingPhase = PairingPhase.idle;
 
+  /// What discovery learned about the headset this attempt is pairing with
+  /// — `null` until [DeviceLinkService] actually connects to one, and
+  /// cleared alongside [_pairingPhase] whenever a fresh attempt starts or
+  /// the current one fails. See [HeadsetPairingContext]'s own doc on why one
+  /// field is enough: this app pairs one device at a time.
+  HeadsetPairingContext? _pairingContext;
+
   Timer? _presenceTimer;
 
   NexaScreen get screen => _screen;
@@ -206,6 +213,11 @@ class NexaAppState extends ChangeNotifier {
 
   /// How far the pairing has got, across discovery, connection and the code.
   PairingPhase get pairingPhase => _pairingPhase;
+
+  /// What discovery learned about the headset this attempt is pairing
+  /// with — `null` until a headset has actually been found. See
+  /// [HeadsetPairingContext]'s own doc.
+  HeadsetPairingContext? get pairingContext => _pairingContext;
   NexaPreferences get prefs => preferencesRepository.current;
 
   /// The first word of the name, which is all the design ever shows.
@@ -376,21 +388,41 @@ class NexaAppState extends ChangeNotifier {
     _deviceId = id;
     _pairStep = 0;
     _pairingPhase = PairingPhase.idle;
+    _pairingContext = null;
     go(NexaScreen.pairIntro);
   }
 
   void beginGuide() {
     _pairStep = 0;
     _pairingPhase = PairingPhase.idle;
+    _pairingContext = null;
     go(NexaScreen.pairing);
   }
 
   /// Recorded by whichever service is driving the pairing right now — the
   /// link while the phone is finding and connecting to the headset, then the
   /// TQRCG service while the code is on screen.
+  ///
+  /// A transition to [PairingPhase.failed] also clears [pairingContext] —
+  /// the one place that happens, so every caller gets it for free rather
+  /// than having to remember to clear stale discovery information itself.
+  /// Every other transition leaves it alone: coming back to an earlier guide
+  /// step must not throw away a headset already found (see
+  /// `PairingGuideScreen._startLink`'s own idempotence), and [setPairingContext]
+  /// is what actually populates it once discovery succeeds.
   void setPairingPhase(PairingPhase phase) {
     if (_pairingPhase == phase) return;
     _pairingPhase = phase;
+    if (phase == PairingPhase.failed) _pairingContext = null;
+    notifyListeners();
+  }
+
+  /// Records what discovery learned about the headset this attempt just
+  /// connected to. Pass `null` to clear it explicitly (e.g. before a retry)
+  /// without waiting for a [PairingPhase.failed] transition.
+  void setPairingContext(HeadsetPairingContext? context) {
+    if (_pairingContext == context) return;
+    _pairingContext = context;
     notifyListeners();
   }
 

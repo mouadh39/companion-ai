@@ -2,7 +2,13 @@ import 'dart:async';
 
 import 'pairing.dart';
 
-export 'pairing.dart' show PairingPhase, PairingProgress, TqrcgPayload;
+export 'pairing.dart'
+    show
+        PairingPhase,
+        PairingProgress,
+        TqrcgPayload,
+        HeadsetPairingContext,
+        HeadsetLanEndpoint;
 
 /// Issues a TQRCG for the phone to display, and completes the pairing the
 /// headset starts when it reads it.
@@ -21,10 +27,17 @@ abstract interface class TqrcgService {
   /// settles on [PairingPhase.paired] or [PairingPhase.failed].
   ///
   /// Assumes the phone is already linked to the headset — see
-  /// [DeviceLinkService].
+  /// [DeviceLinkService]. [pairingContext] is what that link actually
+  /// found: the enrolment handle a real implementation needs to create a
+  /// pairing session at all, and the LAN address (when the transport could
+  /// report one) needed to hand the headset its `pairingSessionId`. `null`
+  /// means no real discovery happened (a scripted implementation ignores
+  /// it; a real one has nothing to pair and must fail cleanly rather than
+  /// invent a session).
   Stream<PairingProgress> issue({
     required String deviceId,
     String? deviceName,
+    HeadsetPairingContext? pairingContext,
   });
 
   /// Withdraw a code that is still on screen.
@@ -46,7 +59,11 @@ class LocalTqrcgService implements TqrcgService {
   Stream<PairingProgress> issue({
     required String deviceId,
     String? deviceName,
+    HeadsetPairingContext? pairingContext,
   }) {
+    // Ignored deliberately — this is a scripted stand-in for UI building
+    // and screenshots; see the class doc. A real implementation must not
+    // do the same.
     _teardown();
     final controller = StreamController<PairingProgress>();
     _controller = controller;

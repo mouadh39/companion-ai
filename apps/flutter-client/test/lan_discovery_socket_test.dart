@@ -21,7 +21,10 @@ void main() {
       addTearDown(sender.close);
       sender.send(utf8.encode('hello nexa'), InternetAddress.loopbackIPv4, socket.boundPort!);
 
-      expect(await received.timeout(const Duration(seconds: 5)), 'hello nexa');
+      final message = await received.timeout(const Duration(seconds: 5));
+      expect(message.text, 'hello nexa');
+      expect(message.senderAddress, InternetAddress.loopbackIPv4);
+      expect(message.senderPort, sender.port);
     });
   });
 
@@ -44,7 +47,7 @@ void main() {
       // actually arrives first, rather than sampling after a fixed delay.
       sender.send(utf8.encode('still alive'), InternetAddress.loopbackIPv4, socket.boundPort!);
 
-      expect(await firstDelivered.timeout(const Duration(seconds: 5)), 'still alive');
+      expect((await firstDelivered.timeout(const Duration(seconds: 5))).text, 'still alive');
     });
   });
 
@@ -67,7 +70,7 @@ void main() {
       // after a fixed delay — if the oversized guard failed to drop the
       // 200-byte datagram, this would see it (and fail), instead of a flaky
       // race against how long delivery happens to take on this host.
-      expect(await firstDelivered.timeout(const Duration(seconds: 5)), 'small');
+      expect((await firstDelivered.timeout(const Duration(seconds: 5))).text, 'small');
     });
   });
 
@@ -78,7 +81,7 @@ void main() {
       addTearDown(socket.close);
 
       final events = <String>[];
-      final sub = socket.messages.listen(events.add);
+      final sub = socket.messages.listen((m) => events.add(m.text));
       addTearDown(sub.cancel);
 
       final sender = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
@@ -113,7 +116,11 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
       senderB.send(utf8.encode('same content'), InternetAddress.loopbackIPv4, socket.boundPort!);
 
-      expect(await firstTwo.timeout(const Duration(seconds: 5)), ['same content', 'same content']);
+      final delivered = await firstTwo.timeout(const Duration(seconds: 5));
+      expect(delivered.map((m) => m.text), ['same content', 'same content']);
+      // And from genuinely different sender ports, proving the key really
+      // did include sender identity rather than happening to pass anyway.
+      expect(delivered[0].senderPort, isNot(delivered[1].senderPort));
     });
 
     test('the same bytes arriving again after the dedup window has passed are delivered again', () async {
@@ -130,7 +137,8 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       sender.send(utf8.encode('again later'), InternetAddress.loopbackIPv4, socket.boundPort!);
 
-      expect(await firstTwo.timeout(const Duration(seconds: 5)), ['again later', 'again later']);
+      final delivered = await firstTwo.timeout(const Duration(seconds: 5));
+      expect(delivered.map((m) => m.text), ['again later', 'again later']);
     });
   });
 
@@ -182,7 +190,7 @@ void main() {
       final firstPort = socket.boundPort;
 
       final firstMessages = <String>[];
-      final firstSub = socket.messages.listen(firstMessages.add);
+      final firstSub = socket.messages.listen((m) => firstMessages.add(m.text));
 
       await socket.open(); // reconnect
       addTearDown(socket.close);
@@ -198,7 +206,7 @@ void main() {
       addTearDown(sender.close);
       sender.send(utf8.encode('after reconnect'), InternetAddress.loopbackIPv4, socket.boundPort!);
 
-      expect(await socket.messages.first.timeout(const Duration(seconds: 5)), 'after reconnect');
+      expect((await socket.messages.first.timeout(const Duration(seconds: 5))).text, 'after reconnect');
       expect(firstPort, isNotNull);
     });
 

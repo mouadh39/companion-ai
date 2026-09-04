@@ -57,7 +57,11 @@ class _TqrcgCodeScreenState extends State<TqrcgCodeScreen> {
     _sub?.cancel();
     _service = state.tqrcgService;
     _sub = _service!
-        .issue(deviceId: state.deviceId ?? '', deviceName: device?.name)
+        .issue(
+          deviceId: state.deviceId ?? '',
+          deviceName: device?.name,
+          pairingContext: state.pairingContext,
+        )
         .listen((p) {
           if (!mounted) return;
           setState(() => _progress = p);
