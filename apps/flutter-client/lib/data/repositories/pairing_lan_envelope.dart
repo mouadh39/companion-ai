@@ -5,17 +5,15 @@ import 'dart:convert';
 ///
 /// ## Why this exists as its own layer, separate from [HeadsetAdvertisementCodec]
 ///
-/// Today there is exactly one message type on this transport — a headset's
-/// advertisement — so a single flat codec was enough to build that. A local
-/// transport that only ever carries one message shape does not need an
-/// envelope; one is added here because a second message type is coming (a
-/// phone's reply carrying `pairingSessionId`, once the LAN work reaches that
-/// integration step) and retrofitting a `type` discriminator onto an
-/// already-shipped flat wire format is exactly the kind of breaking change
-/// this class exists to avoid needing later. Nothing that already decodes
-/// today's advertisement wire bytes stops working because of this: a message
-/// with no `type` field is treated as `advertisement`, the only type that
-/// has ever existed on this wire.
+/// This transport now carries two message types — a headset's advertisement,
+/// and a phone's `pairing_context` reply carrying `pairingSessionId` (see
+/// `PairingContextCodec`) — and started with only the first. Retrofitting a
+/// `type` discriminator onto an already-shipped flat wire format would have
+/// been exactly the kind of breaking change this class exists to avoid
+/// needing: nothing that already decodes today's advertisement wire bytes
+/// stops working because of this, since a message with no `type` field is
+/// still treated as `advertisement`, the only type that ever existed before
+/// this field did.
 ///
 /// ## What "hostile" means for this layer specifically
 ///
@@ -36,9 +34,7 @@ abstract final class PairingLanEnvelope {
   static const magic = 'nexa.pairing.v1';
 
   /// Every message type this build of the codec knows how to route.
-  /// `pairing_context` is not listed yet — it is added when the class that
-  /// interprets it exists, not before; see the class doc.
-  static const supportedTypes = <String>{'advertisement'};
+  static const supportedTypes = <String>{'advertisement', 'pairing_context'};
 
   /// A generous ceiling on the raw encoded string, checked before any UTF-8
   /// measurement or JSON parsing runs — the cheapest possible rejection of

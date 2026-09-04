@@ -33,7 +33,7 @@ namespace Nexa.Pairing
         /// <summary>Must match <c>apps/flutter-client</c>'s <c>PairingLanEnvelope.maxEncodedChars</c> exactly.</summary>
         public const int MaxEncodedChars = 4096;
 
-        static readonly HashSet<string> SupportedTypes = new HashSet<string> { "advertisement" };
+        static readonly HashSet<string> SupportedTypes = new HashSet<string> { "advertisement", "pairing_context" };
 
         /// <summary>
         /// The cheapest possible rejection, before any JSON parsing runs at all: empty, or larger
