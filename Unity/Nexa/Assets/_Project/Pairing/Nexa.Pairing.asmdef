@@ -2,7 +2,8 @@
     "name": "Nexa.Pairing",
     "rootNamespace": "Nexa.Pairing",
     "references": [
-        "Nexa.Core"
+        "Nexa.Core",
+        "Nexa.Data"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
