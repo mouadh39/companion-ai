@@ -146,7 +146,11 @@ namespace Nexa.Pairing.Tests
             _receiver.Start(code => secondCode = code);
             Assert.IsTrue(_scanner.IsScanning);
 
-            const string secondValidCode = "NX2.zZyYxXwWvVuUtTsSrRqQpPoOnNmMlLkKjJiIhHgGf";
+            // A genuinely distinct 43-character secret (the reverse of ValidCode's own secret) —
+            // this was previously mistyped one character short of PairingCodeValidator's required
+            // length, which made this "second, different code" silently fail validation and never
+            // reach onCodeReady at all; only surfaced once a real Unity Editor first ran this test.
+            const string secondValidCode = "NX2.EDCBA_-9876543210zYxWvUtSrQpOnMlKjIhGfEdCbA";
             _scanner.EmitFrame(QrScanResult.Decoded(secondValidCode));
 
             Assert.AreEqual(secondValidCode, secondCode);
