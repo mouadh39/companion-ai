@@ -4,6 +4,7 @@
     "references": [
         "Nexa.Core",
         "Nexa.Pairing",
+        "Nexa.Identity",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
