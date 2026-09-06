@@ -40,12 +40,42 @@ class NexaApp extends StatefulWidget {
   State<NexaApp> createState() => _NexaAppState();
 }
 
+/// A screen name for the visual-QA screenshot pass the design handoff
+/// mandates ("capture screenshots from the REAL Flutter app"): set it with
+/// `--dart-define=NEXA_QA_SCREEN=<name>` for a native build, or append
+/// `?qa=<name>` to the URL on web. Absent in every real run, so it changes
+/// nothing about how the app actually starts. It only bypasses the entrance
+/// and the auth gate to render a screen with the app's real widgets — it
+/// fabricates no data, the repositories stay empty exactly as they would for
+/// a brand-new account.
+String get _qaScreen {
+  const fromDefine = String.fromEnvironment('NEXA_QA_SCREEN');
+  if (fromDefine.isNotEmpty) return fromDefine;
+  return Uri.base.queryParameters['qa'] ?? '';
+}
+
 class _NexaAppState extends State<NexaApp> {
-  late final _state = widget.state ?? NexaAppState();
+  late final _state =
+      widget.state ?? NexaAppState(skipEntrance: _qaScreen.isNotEmpty);
 
   @override
   void initState() {
     super.initState();
+    final qa = _qaScreen;
+    if (qa.isNotEmpty && widget.state == null) {
+      final theme = Uri.base.queryParameters['theme'];
+      if (theme == 'dark' || theme == 'light') {
+        _state.updatePrefs(_state.prefs.copyWith(
+          theme: theme == 'dark' ? ThemeChoice.dark : ThemeChoice.light,
+        ));
+      }
+      final target = NexaScreen.values.cast<NexaScreen?>().firstWhere(
+            (s) => s!.name == qa,
+            orElse: () => null,
+          );
+      if (target != null) _state.go(target);
+      return;
+    }
     // Restores the persisted session and this phone's device record, in that
     // order (PhoneDeviceRepository.restore reads currentUserId). It does not
     // navigate: `EntranceScreen` calls `completeEntrance()` when the launch
