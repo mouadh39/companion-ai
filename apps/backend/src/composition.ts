@@ -473,6 +473,19 @@ export const compose = (
           keepAliveInitialDelayMillis: 10_000,
         });
 
+  // An error on an *idle* pooled client — the Supabase pooler recycling a
+  // backend, a network blip on a long-lived socket — is emitted on the pool
+  // itself, not on any query. `pg` has already discarded the bad client by
+  // the time this fires, so the next query simply opens a fresh one; the only
+  // thing left to do is not let Node treat an unhandled 'error' as a fatal
+  // uncaught exception. Logged, swallowed. A query that genuinely cannot
+  // reach the database still rejects at its own call site, unchanged.
+  if (pool !== null) {
+    pool.on('error', (error: Error) => {
+      console.error('[nexa] idle database client error', { error: error.message });
+    });
+  }
+
   const workingMemory: WorkingMemoryPort =
     pool === null ? new InMemoryWorkingMemory() : new PgWorkingMemory(pool);
   const memories: MemoryStore =
