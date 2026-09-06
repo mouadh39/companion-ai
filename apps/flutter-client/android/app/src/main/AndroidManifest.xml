@@ -7,7 +7,7 @@
          build except the one that ships. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="nexa_client"
+        android:label="NEXA AI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

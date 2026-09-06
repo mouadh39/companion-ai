@@ -18,6 +18,23 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
   zxing2: ^0.2.3
+  # Build-time only: generates the platform launcher icons from the real
+  # Nexa mark. Run `dart run flutter_launcher_icons` after changing the
+  # source art in assets/icon/.
+  flutter_launcher_icons: ^0.14.4
+
+# The installed app is "NEXA AI" with the real Nexa mark on the near-black
+# identity ground — never the Flutter placeholder. Android gets an adaptive
+# icon (emerald mark foreground, #0B0E12 background); iOS gets the flat
+# 1024 with alpha flattened.
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/icon/nexa-icon.png"
+  adaptive_icon_background: "#0B0E12"
+  adaptive_icon_foreground: "assets/icon/nexa-icon-foreground.png"
+  min_sdk_android: 21
 
 flutter:
   uses-material-design: true

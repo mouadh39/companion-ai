@@ -1,4 +1,4 @@
-package com.example.nexa_client
+package ai.nexa.app
 
 import io.flutter.embedding.android.FlutterActivity
 
