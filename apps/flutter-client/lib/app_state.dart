@@ -127,9 +127,6 @@ enum NexaTab {
   };
 }
 
-/// How the auth screen is currently asking for identity.
-enum AuthMode { providers, phone, passkey, email }
-
 /// The app's state, held in one place.
 ///
 /// The design drives every screen from a single state object rather than a
@@ -280,7 +277,6 @@ class NexaAppState extends ChangeNotifier {
         unawaited(phoneDevice.restore());
       }();
 
-  AuthMode _authMode = AuthMode.providers;
   String _name = '';
 
   /// The real, saved username — set once onboarding's username step
@@ -314,7 +310,6 @@ class NexaAppState extends ChangeNotifier {
   Timer? _presenceTimer;
 
   NexaScreen get screen => _screen;
-  AuthMode get authMode => _authMode;
   String get name => _name;
   String get username => _username;
   String get email => preferencesRepository.email;
@@ -407,11 +402,6 @@ class NexaAppState extends ChangeNotifier {
   // Onboarding and identity
   // ------------------------------------------------------------------
 
-  void setAuthMode(AuthMode mode) {
-    _authMode = mode;
-    notifyListeners();
-  }
-
   void setName(String value) {
     _name = value;
     notifyListeners();
@@ -487,22 +477,7 @@ class NexaAppState extends ChangeNotifier {
     }
   }
 
-  void toggleAuth() {
-    _screen = _screen == NexaScreen.login
-        ? NexaScreen.signup
-        : NexaScreen.login;
-    _authMode = AuthMode.providers;
-    notifyListeners();
-  }
-
-  /// The same sign-in/create-account switch as [toggleAuth], but leaves
-  /// [authMode] alone.
-  ///
-  /// [toggleAuth] is the provider list's own link, and always lands back on
-  /// the provider choice. This is for the email/password sub-mode's cross
-  /// link instead — "Create account" from a sign-in should land on the
-  /// create-account *form*, not bounce through the provider list first —
-  /// so it switches [_screen] the same way and stops there.
+  /// The sign-in / create-account cross link at the foot of the auth form.
   void switchAuthScreen() {
     _screen = _screen == NexaScreen.login
         ? NexaScreen.signup
@@ -517,7 +492,6 @@ class NexaAppState extends ChangeNotifier {
     _name = '';
     _username = '';
     _onboardingProfile = null;
-    _authMode = AuthMode.providers;
     notifyListeners();
     // Synchronous and first: the app must stop treating itself as having a
     // registered device the instant sign-out happens, not after a network

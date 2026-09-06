@@ -183,11 +183,15 @@ Future<NexaAppState> _pumpEmail(
   final state = NexaAppState(authSession: authSession, profile: profile);
   addTearDown(state.dispose);
   state.go(at);
-  state.setAuthMode(AuthMode.email);
 
   await tester.pumpWidget(_host(state));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 700));
+  // The four provider rows now sit above the email form on one shared
+  // surface (matching the approved design). Scroll them off so the form's
+  // own controls — the submit button, the footer links — are in view.
+  await tester.drag(find.byType(Scrollable).first, const Offset(0, -340));
+  await tester.pump();
   return state;
 }
 
@@ -333,7 +337,7 @@ void main() {
     });
 
     testWidgets(
-      "'Don't have an account?' switches to the create-account form, staying in email mode",
+      "'Don't have an account?' switches to the create-account form",
       (tester) async {
         final h = _repo((r) => fail('should not be called'));
         final state = await _pumpEmail(
@@ -347,7 +351,6 @@ void main() {
         await tester.pump(const Duration(milliseconds: 700));
 
         expect(state.screen, NexaScreen.signup);
-        expect(state.authMode, AuthMode.email);
         expect(find.text('CONFIRM PASSWORD'), findsOneWidget);
       },
     );

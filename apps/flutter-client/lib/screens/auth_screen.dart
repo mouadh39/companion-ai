@@ -1,4 +1,6 @@
-import 'package:flutter/widgets.dart';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme/nexa_theme.dart';
@@ -6,19 +8,27 @@ import '../widgets/nexa_controls.dart';
 import '../widgets/nexa_mark.dart';
 import '../widgets/nexa_wordmark.dart';
 import '../widgets/provider_glyphs.dart';
+import 'auth_error_text.dart';
 
-/// The identity providers the design offers, in order.
-const _providers = <({String label, AuthBrand brand})>[
-  (label: 'Continue with Google', brand: AuthBrand.google),
-  (label: 'Continue with Apple', brand: AuthBrand.apple),
-  (label: 'Continue with Meta', brand: AuthBrand.meta),
+/// The identity providers the design offers, in order. All four are drawn as
+/// the approved design shows them — monochrome silhouettes, so three
+/// saturated brand logos never outshout Nexa — but **none is wired to a real
+/// provider yet**: tapping one says so honestly rather than pretending a
+/// sign-in happened. Email/password below is the real authentication this
+/// build has.
+const _providers = <({String label, AuthBrand brand, String kind})>[
+  (label: 'Continue with Google', brand: AuthBrand.google, kind: 'Google'),
+  (label: 'Continue with Apple', brand: AuthBrand.apple, kind: 'Apple'),
+  (label: 'Continue with Meta', brand: AuthBrand.meta, kind: 'Meta'),
+  (label: 'Continue with a passkey', brand: AuthBrand.passkey, kind: 'Passkey'),
 ];
 
-/// Sign up, log in, and password reset — one surface with four modes.
+/// Sign in, create account, and password reset — one surface, the title and
+/// body swapping without it ever feeling like a navigation.
 ///
-/// The design deliberately does not give these separate screens: the title and
-/// the body swap, the chrome does not, so moving between them never feels like
-/// a navigation.
+/// The providers and the email form sit on the same screen (no sub-modes):
+/// the four provider rows, an "or use email" rule, then the real
+/// email/password form. Reset is its own body.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -27,15 +37,9 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  final _phone = TextEditingController();
-  final _email = TextEditingController();
-
-  @override
-  void dispose() {
-    _phone.dispose();
-    _email.dispose();
-    super.dispose();
-  }
+  /// Set when a provider row is tapped — an honest "not connected yet"
+  /// line, not a navigation.
+  String? _providerNotice;
 
   @override
   Widget build(BuildContext context) {
@@ -43,96 +47,85 @@ class _AuthScreenState extends State<AuthScreen> {
     final state = NexaScope.of(context);
     final isForgot = state.screen == NexaScreen.forgot;
     final isLogin = state.screen == NexaScreen.login;
-    final mode = isForgot ? null : state.authMode;
 
-    final title = switch ((isForgot, mode)) {
-      (true, _) => 'Reset your access.',
-      (_, AuthMode.phone) => 'What is your number?',
-      (_, AuthMode.passkey) => 'Use your passkey.',
-      _ => isLogin ? 'Welcome back.' : 'Welcome to Nexa',
-    };
-
-    final subtitle = switch ((isForgot, mode)) {
-      (true, _) => 'We will send a link to your email.',
-      (_, AuthMode.phone) => 'A code, not a password.',
-      (_, AuthMode.passkey) => 'No password, nothing to forget.',
-      _ => "Explore what's next.",
-    };
-
-    // Signing in lands on the assistant; signing up meets Nexa first.
-    void advance() => state.go(
-      isForgot
-          ? NexaScreen.login
-          : isLogin
-          ? NexaScreen.assistant
-          : NexaScreen.meeting,
-    );
+    final title = isForgot
+        ? 'Reset your access.'
+        : isLogin
+            ? 'Welcome back.'
+            : 'Welcome to Nexa';
+    final subtitle = isForgot
+        ? 'We will send a link to your email.'
+        : isLogin
+            ? 'Sign in to your Nexa account.'
+            : 'Create your account with an email and a password.';
 
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: RadialGradient(
-          center: Alignment(0, -1),
+          center: const Alignment(0, -1),
           radius: 1.1,
           colors: [c.groundTop, c.void_],
-          stops: [0.0, 0.68],
+          stops: const [0.0, 0.68],
         ),
       ),
       child: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(30, 58, 30, 40),
+          padding: const EdgeInsets.fromLTRB(30, 52, 30, 40),
           child: ConstrainedBox(
-            // Fill the frame so the footer can sit at the bottom on short
-            // content and scroll away on long.
             constraints: BoxConstraints(
-              // Clamped: on a very short viewport the subtraction would ask
-              // for a negative height and the whole screen would throw.
               minHeight:
-                  (MediaQuery.sizeOf(context).height - 98).clamp(0.0, 4000.0),
+                  (MediaQuery.sizeOf(context).height - 92).clamp(0.0, 4000.0),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 NexaBackButton(
-                  // Phone and passkey are sub-modes of this same surface, so
-                  // back should return to the choice of method, not leave the
-                  // screen altogether.
-                  onTap: () => state.authMode == AuthMode.providers
-                      ? state.go(NexaScreen.welcome)
-                      : state.setAuthMode(AuthMode.providers),
+                  onTap: () => state.back(
+                    fallback: isForgot ? NexaScreen.login : NexaScreen.welcome,
+                  ),
                 ),
-                const SizedBox(height: 26),
-                const Row(
+                const SizedBox(height: 22),
+                Row(
                   children: [
-                    NexaMark(
-                      size: 34,
-                      glow: 20,
-                      glowOpacity: 0.35,
-                    ),
-                    SizedBox(width: 13),
-                    NexaWordmark(size: 12, tracking: 0.5),
+                    const NexaMark(size: 34, glow: 20, glowOpacity: 0.35),
+                    const SizedBox(width: 13),
+                    NexaWordmark(size: 12, tracking: 0.5, color: c.ink72),
                   ],
                 ),
                 const SizedBox(height: 22),
-                Text(title, style: NexaType.display(size: 29).copyWith(height: 1.16)),
+                Text(
+                  title,
+                  style: NexaType.display(size: 29).copyWith(height: 1.16),
+                ),
                 const SizedBox(height: 9),
                 Text(
                   subtitle,
                   style: NexaType.body(size: 14.5, color: c.ink45),
                 ),
                 if (isForgot)
-                  _ForgotBody(controller: _email, onSubmit: advance)
-                else
-                  switch (state.authMode) {
-                    AuthMode.providers => _ProvidersBody(
-                      isLogin: isLogin,
-                      onProvider: advance,
+                  const _ForgotBody()
+                else ...[
+                  const SizedBox(height: 28),
+                  for (var i = 0; i < _providers.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 9),
+                    _ProviderRow(
+                      label: _providers[i].label,
+                      brand: _providers[i].brand,
+                      onTap: () => setState(() {
+                        _providerNotice =
+                            '${_providers[i].kind} sign-in isn’t connected '
+                            'yet. Continue with your email below.';
+                      }),
                     ),
-                    AuthMode.phone => _PhoneBody(
-                      controller: _phone,
-                      onSubmit: advance,
-                    ),
-                    AuthMode.passkey => _PasskeyBody(onSubmit: advance),
-                  },
+                  ],
+                  if (_providerNotice case final notice?) ...[
+                    const SizedBox(height: 12),
+                    _Notice(notice),
+                  ],
+                  const SizedBox(height: 22),
+                  const _OrDivider(),
+                  _EmailBody(isLogin: isLogin),
+                ],
               ],
             ),
           ),
@@ -142,70 +135,285 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-/// The default: three providers, then the two methods that need no password.
-class _ProvidersBody extends StatelessWidget {
-  const _ProvidersBody({required this.isLogin, required this.onProvider});
+/// One provider row — a silhouette glyph and a label on a frosted surface.
+/// Honest: it is styled exactly as the approved design, and it does not
+/// navigate anywhere, because nothing is wired behind it.
+class _ProviderRow extends StatelessWidget {
+  const _ProviderRow({
+    required this.label,
+    required this.brand,
+    required this.onTap,
+  });
+
+  final String label;
+  final AuthBrand brand;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return NexaPressable(
+      onTap: onTap,
+      scale: 0.978,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+            decoration: BoxDecoration(
+              color: c.isDark ? const Color(0x14FFFFFF) : const Color(0xB8FFFFFF),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: c.glassBorder, width: 1),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  child: Center(
+                    child: ProviderGlyph(brand: brand, size: 17, color: c.ink72),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: NexaType.ui(
+                      size: 14.5,
+                      weight: FontWeight.w500,
+                      color: c.ink86,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The honest inline line under the provider rows.
+class _Notice extends StatelessWidget {
+  const _Notice(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: c.surfaceQuiet,
+        borderRadius: NexaRadius.cardAll,
+        border: Border.all(color: c.hairlineStrong, width: 1),
+      ),
+      child: Text(
+        text,
+        style: NexaType.body(size: 12.5, color: c.ink50).copyWith(height: 1.5),
+      ),
+    );
+  }
+}
+
+/// Email and password — the real authentication this build has, wired to
+/// `AuthSessionRepository.signInWithPassword` / `.signUp`. Always visible
+/// under the provider rows; [isLogin] decides which fields, which label and
+/// which destination apply.
+///
+/// Owns its own controllers and state: leaving this screen and coming back
+/// starts the form over, including the password field — nothing here should
+/// linger in memory longer than the attempt using it.
+class _EmailBody extends StatefulWidget {
+  const _EmailBody({required this.isLogin});
 
   final bool isLogin;
-  final VoidCallback onProvider;
+
+  @override
+  State<_EmailBody> createState() => _EmailBodyState();
+}
+
+class _EmailBodyState extends State<_EmailBody> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _confirm = TextEditingController();
+
+  bool _obscurePassword = true;
+  bool _obscureConfirm = true;
+  bool _submitting = false;
+
+  String? _emailError;
+  String? _passwordError;
+  String? _confirmError;
+  String? _formError;
+
+  /// Set once a sign-up succeeds but the project requires confirming the
+  /// address before a session exists — see `AuthSessionRepository.signUp`.
+  bool _awaitingConfirmation = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  static bool _looksLikeEmail(String value) {
+    final at = value.indexOf('@');
+    return at > 0 && value.indexOf('.', at + 2) > at + 1 && !value.contains(' ');
+  }
+
+  bool _validate() {
+    final email = _email.text.trim();
+    final password = _password.text;
+
+    setState(() {
+      _emailError = email.isEmpty
+          ? 'Email is required.'
+          : _looksLikeEmail(email)
+              ? null
+              : "That doesn't look like an email address.";
+      _passwordError = password.isEmpty ? 'Password is required.' : null;
+      _confirmError = widget.isLogin || _confirm.text == password
+          ? null
+          : "Passwords don't match.";
+    });
+
+    return _emailError == null && _passwordError == null && _confirmError == null;
+  }
+
+  Future<void> _submit() async {
+    if (_submitting) return;
+    if (!_validate()) return;
+
+    final state = NexaScope.of(context);
+    final email = _email.text.trim();
+    final password = _password.text;
+
+    setState(() {
+      _submitting = true;
+      _formError = null;
+    });
+
+    try {
+      if (widget.isLogin) {
+        await state.authSession.signInWithPassword(
+          email: email,
+          password: password,
+        );
+        if (!mounted) return;
+        state.setEmail(email);
+        // Never assumed complete just because sign-in succeeded — this runs
+        // the real profile check and routes to the assistant, to resuming
+        // onboarding, or to a real error state accordingly.
+        await state.routeAfterAuthentication();
+        return;
+      }
+
+      final session = await state.authSession.signUp(
+        email: email,
+        password: password,
+      );
+      if (!mounted) return;
+      if (session != null) {
+        state.setEmail(email);
+        // A fresh account meets Nexa before landing on the assistant.
+        state.goRoot(NexaScreen.meeting);
+        return;
+      }
+      setState(() => _awaitingConfirmation = true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _formError = authErrorMessage(error, isSignUp: !widget.isLogin),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
     final state = NexaScope.of(context);
 
+    if (_awaitingConfirmation) {
+      return _ConfirmEmailNotice(email: _email.text.trim());
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 30),
-        for (var i = 0; i < _providers.length; i++) ...[
-          if (i > 0) const SizedBox(height: 10),
-          NexaRiseIn(
-            delay: NexaMotion.stagger * i,
-            duration: const Duration(milliseconds: 500),
-            distance: 14,
-            child: NexaPillRow(
-              label: _providers[i].label,
-              labelWeight: FontWeight.w500,
-              labelColor: c.ink90,
-              fill: c.glassFill,
-              border: c.glassBorder,
-              onTap: onProvider,
-              leading: _ProviderGlyph(brand: _providers[i].brand),
+        const SizedBox(height: 24),
+        _BoxedField(
+          label: 'Email',
+          controller: _email,
+          hint: 'you@example.com',
+          keyboardType: TextInputType.emailAddress,
+          error: _emailError != null,
+        ),
+        if (_emailError case final error?) _FieldError(error),
+        const SizedBox(height: 18),
+        _BoxedField(
+          label: 'Password',
+          controller: _password,
+          hint: '••••••••',
+          obscureText: _obscurePassword,
+          error: _passwordError != null,
+          onSubmitted: widget.isLogin ? (_) => _submit() : null,
+          trailing: _VisibilityToggle(
+            shown: !_obscurePassword,
+            onTap: () => setState(() => _obscurePassword = !_obscurePassword),
+          ),
+        ),
+        if (_passwordError case final error?) _FieldError(error),
+        if (!widget.isLogin) ...[
+          const SizedBox(height: 18),
+          _BoxedField(
+            label: 'Confirm password',
+            controller: _confirm,
+            hint: '••••••••',
+            obscureText: _obscureConfirm,
+            error: _confirmError != null,
+            onSubmitted: (_) => _submit(),
+            trailing: _VisibilityToggle(
+              shown: !_obscureConfirm,
+              onTap: () => setState(() => _obscureConfirm = !_obscureConfirm),
+            ),
+          ),
+          if (_confirmError case final error?) _FieldError(error),
+        ],
+        if (_formError case final error?) ...[
+          const SizedBox(height: 16),
+          _FormErrorBanner(error),
+        ],
+        const SizedBox(height: 28),
+        NexaPrimaryButton(
+          label: _submitting
+              ? (widget.isLogin ? 'Signing in…' : 'Creating account…')
+              : (widget.isLogin ? 'Sign in' : 'Create account'),
+          busy: _submitting,
+          onTap: _submitting ? null : _submit,
+        ),
+        if (widget.isLogin) ...[
+          const SizedBox(height: 10),
+          Center(
+            child: NexaQuietButton(
+              label: 'Forgot password?',
+              padding: 8,
+              size: 13,
+              color: c.ink45,
+              onTap: () => state.go(NexaScreen.forgot),
             ),
           ),
         ],
-        const SizedBox(height: 22),
-        const _OrDivider(),
-        const SizedBox(height: 20),
-        NexaPillRow(
-          label: 'Continue with phone',
-          trailing: '›',
-          border: c.glassBorder,
-          onTap: () => state.setAuthMode(AuthMode.phone),
-        ),
-        const SizedBox(height: 10),
-        NexaPillRow(
-          label: 'Use a passkey',
-          labelWeight: FontWeight.w500,
-          labelColor: c.emeraldBright,
-          trailing: 'Fastest',
-          trailingColor: const Color(0x8CA7F3D0),
-          fill: const Color(0x174ADE9B),
-          border: const Color(0x474ADE9B),
-          onTap: () => state.setAuthMode(AuthMode.passkey),
-        ),
-        const SizedBox(height: 32),
-        Text(
-          "By continuing you agree to Nexa's terms and privacy notice.",
-          textAlign: TextAlign.center,
-          style: NexaType.body(size: 13, color: c.ink32)
-              .copyWith(height: 1.6),
-        ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 18),
         Center(
           child: NexaPressable(
-            onTap: state.toggleAuth,
+            onTap: state.switchAuthScreen,
             scale: 0.99,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
@@ -213,12 +421,18 @@ class _ProvidersBody extends StatelessWidget {
                 TextSpan(
                   children: [
                     TextSpan(
-                      text: isLogin ? 'New to Nexa? ' : 'Already with Nexa? ',
+                      text: widget.isLogin
+                          ? "Don't have an account? "
+                          : 'Already have an account? ',
                       style: NexaType.ui(size: 13.5, color: c.ink42),
                     ),
                     TextSpan(
-                      text: isLogin ? 'Create an account' : 'Log in',
-                      style: NexaType.ui(size: 13.5, color: c.emerald),
+                      text: widget.isLogin ? 'Create account' : 'Sign in',
+                      style: NexaType.ui(
+                        size: 13.5,
+                        weight: FontWeight.w500,
+                        color: c.emerald,
+                      ),
                     ),
                   ],
                 ),
@@ -226,73 +440,204 @@ class _ProvidersBody extends StatelessWidget {
             ),
           ),
         ),
-        if (isLogin) ...[
-          const SizedBox(height: 4),
-          Center(
-            child: NexaQuietButton(
-              label: 'Forgot password?',
-              padding: 8,
-              size: 13,
-              color: c.ink36,
-              onTap: () => state.go(NexaScreen.forgot),
-            ),
-          ),
-        ],
       ],
     );
   }
 }
 
-/// A phone number and nothing else — the code arrives by text.
-class _PhoneBody extends StatelessWidget {
-  const _PhoneBody({required this.controller, required this.onSubmit});
+/// The boxed field the auth form uses — `--surface-quiet` fill, hairline
+/// border, an emerald focus ring, an optional trailing control. The design's
+/// own field shape here, rather than the underlined `NexaField` the rest of
+/// the app uses for its one-line question screens.
+class _BoxedField extends StatefulWidget {
+  const _BoxedField({
+    required this.label,
+    required this.controller,
+    this.hint,
+    this.keyboardType,
+    this.obscureText = false,
+    this.error = false,
+    this.onSubmitted,
+    this.trailing,
+  });
 
+  final String label;
   final TextEditingController controller;
-  final VoidCallback onSubmit;
+  final String? hint;
+  final TextInputType? keyboardType;
+  final bool obscureText;
+  final bool error;
+  final ValueChanged<String>? onSubmitted;
+  final Widget? trailing;
+
+  @override
+  State<_BoxedField> createState() => _BoxedFieldState();
+}
+
+class _BoxedFieldState extends State<_BoxedField> {
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    final state = NexaScope.of(context);
+    final focused = _focus.hasFocus;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 32),
-        NexaField(
-          controller: controller,
-          prefix: '+1',
-          hint: '(555) 000-0000',
-          textSize: 22,
-          keyboardType: TextInputType.phone,
-          onSubmitted: (_) => onSubmit(),
-        ),
-        const SizedBox(height: 16),
         Text(
-          "We'll text you a six-digit code. No password to remember.",
-          style: NexaType.body(size: 13, color: c.ink36)
-              .copyWith(height: 1.6),
+          widget.label.toUpperCase(),
+          style: NexaType.label(size: 10.5, tracking: 0.18, color: c.ink42),
         ),
-        const SizedBox(height: 48),
-        NexaPrimaryButton(label: 'Send code', trailing: '→', onTap: onSubmit),
-        const SizedBox(height: 16),
-        NexaQuietButton(
-          label: 'More ways to continue',
-          padding: 12,
-          size: 13.5,
-          color: c.ink40,
-          onTap: () => state.setAuthMode(AuthMode.providers),
+        const SizedBox(height: 9),
+        AnimatedContainer(
+          duration: NexaMotion.fast,
+          curve: NexaMotion.curve,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: widget.error
+                ? c.danger.withValues(alpha: 0.07)
+                : focused
+                    ? c.emeraldWash
+                    : c.surfaceQuiet,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: widget.error
+                  ? c.danger.withValues(alpha: 0.5)
+                  : focused
+                      ? c.emeraldBorder
+                      : c.hairlineStrong,
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: widget.controller,
+                  focusNode: _focus,
+                  keyboardType: widget.keyboardType,
+                  obscureText: widget.obscureText,
+                  onSubmitted: widget.onSubmitted,
+                  style: NexaType.ui(size: 16, color: c.ink),
+                  cursorColor: c.emerald,
+                  cursorWidth: 1.5,
+                  decoration: InputDecoration(
+                    isCollapsed: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                    border: InputBorder.none,
+                    hintText: widget.hint,
+                    hintStyle: NexaType.ui(size: 16, color: c.ink30),
+                  ),
+                ),
+              ),
+              if (widget.trailing != null) widget.trailing!,
+            ],
+          ),
         ),
       ],
     );
   }
 }
 
-/// The passkey path — the device proves it is you, so there is nothing to type.
-class _PasskeyBody extends StatelessWidget {
-  const _PasskeyBody({required this.onSubmit});
+/// The bare-text "Show"/"Hide" a password field asks for — the app's own
+/// idiom, not an eye icon.
+class _VisibilityToggle extends StatelessWidget {
+  const _VisibilityToggle({required this.shown, required this.onTap});
 
-  final VoidCallback onSubmit;
+  final bool shown;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return NexaPressable(
+      onTap: onTap,
+      scale: 0.94,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 10),
+        child: Text(
+          shown ? 'Hide' : 'Show',
+          style: NexaType.ui(size: 13, color: c.ink50),
+        ),
+      ),
+    );
+  }
+}
+
+/// The small red line under a field once it has failed validation.
+class _FieldError extends StatelessWidget {
+  const _FieldError(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        message,
+        style: NexaType.body(size: 12.5, color: c.danger),
+      ),
+    );
+  }
+}
+
+/// The form-error banner — an icon, the message, on a danger wash.
+class _FormErrorBanner extends StatelessWidget {
+  const _FormErrorBanner(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+      decoration: BoxDecoration(
+        color: c.danger.withValues(alpha: 0.09),
+        borderRadius: NexaRadius.cardAll,
+        border: Border.all(color: c.danger.withValues(alpha: 0.26), width: 1),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Text('!', style: NexaType.ui(size: 14, color: c.danger)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: NexaType.body(size: 13, color: c.danger).copyWith(height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown in place of the sign-up form once Supabase has accepted the account
+/// but requires confirming the address before a session exists.
+class _ConfirmEmailNotice extends StatelessWidget {
+  const _ConfirmEmailNotice({required this.email});
+
+  final String email;
 
   @override
   Widget build(BuildContext context) {
@@ -302,100 +647,152 @@ class _PasskeyBody extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 40),
-        const Center(
-          child: NexaMark(
-            size: 118,
-            glow: 44,
-            glowOpacity: 0.5,
-            breathe: Duration(seconds: 5),
-            float: Duration(seconds: 12),
+        const SizedBox(height: 28),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: c.emeraldWash,
+            borderRadius: NexaRadius.glassAll,
+            border: Border.all(color: c.emeraldBorder, width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                email.isEmpty
+                    ? "We've sent a confirmation link to your email."
+                    : "We've sent a confirmation link to $email.",
+                style: NexaType.body(size: 14.5, color: c.ink86)
+                    .copyWith(height: 1.6),
+              ),
+              const SizedBox(height: 9),
+              Text(
+                'Follow it to finish creating your account, then sign in below.',
+                style: NexaType.body(size: 13, color: c.ink45)
+                    .copyWith(height: 1.6),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 26),
-        Text(
-          'Confirm with your device',
-          textAlign: TextAlign.center,
-          style: NexaType.ui(size: 21, color: c.ink, height: 1.3),
+        const SizedBox(height: 28),
+        NexaPrimaryButton(
+          label: 'Back to sign in',
+          onTap: () => state.go(NexaScreen.login),
         ),
-        const SizedBox(height: 10),
-        Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 250),
+      ],
+    );
+  }
+}
+
+/// Password reset, wired to `AuthSessionRepository.requestPasswordReset`.
+///
+/// Supabase answers `/auth/v1/recover` the same way whether or not the
+/// address has an account — deliberately, so the endpoint cannot be used to
+/// learn which emails are registered. This shows the same confirmation
+/// either way, for the same reason.
+class _ForgotBody extends StatefulWidget {
+  const _ForgotBody();
+
+  @override
+  State<_ForgotBody> createState() => _ForgotBodyState();
+}
+
+class _ForgotBodyState extends State<_ForgotBody> {
+  final _email = TextEditingController();
+  bool _submitting = false;
+  bool _sent = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_submitting) return;
+    final email = _email.text.trim();
+    if (email.isEmpty) {
+      setState(() => _error = 'Email is required.');
+      return;
+    }
+
+    final state = NexaScope.of(context);
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+
+    try {
+      await state.authSession.requestPasswordReset(email);
+      if (!mounted) return;
+      setState(() => _sent = true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = authErrorMessage(error, isSignUp: false));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    final state = NexaScope.of(context);
+
+    if (_sent) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 28),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: c.emeraldWash,
+              borderRadius: NexaRadius.glassAll,
+              border: Border.all(color: c.emeraldBorder, width: 1),
+            ),
             child: Text(
-              "Nexa never stores a password. Your device proves it's you.",
-              textAlign: TextAlign.center,
-              style: NexaType.body(size: 14, color: c.ink45)
+              "If an account exists for that email, we've sent a link to "
+              'reset your password.',
+              style: NexaType.body(size: 14, color: c.ink86)
                   .copyWith(height: 1.6),
             ),
           ),
-        ),
-        const SizedBox(height: 48),
-        NexaPrimaryButton(label: 'Continue', onTap: onSubmit),
-        const SizedBox(height: 16),
-        NexaQuietButton(
-          label: 'Use another method',
-          padding: 12,
-          size: 13.5,
-          color: c.ink40,
-          onTap: () => state.setAuthMode(AuthMode.providers),
-        ),
-      ],
-    );
-  }
-}
+          const SizedBox(height: 28),
+          NexaPrimaryButton(
+            label: 'Back to sign in',
+            onTap: () => state.go(NexaScreen.login),
+          ),
+        ],
+      );
+    }
 
-/// Password reset — one email field and a link out.
-class _ForgotBody extends StatelessWidget {
-  const _ForgotBody({required this.controller, required this.onSubmit});
-
-  final TextEditingController controller;
-  final VoidCallback onSubmit;
-
-  @override
-  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 30),
-        NexaField(
+        const SizedBox(height: 28),
+        _BoxedField(
           label: 'Email',
-          controller: controller,
+          controller: _email,
           hint: 'you@example.com',
-          textSize: 17,
           keyboardType: TextInputType.emailAddress,
-          onSubmitted: (_) => onSubmit(),
+          error: _error != null,
+          onSubmitted: (_) => _submit(),
         ),
-        const SizedBox(height: 48),
-        NexaPrimaryButton(label: 'Send reset link', onTap: onSubmit),
+        if (_error case final error?) _FieldError(error),
+        const SizedBox(height: 28),
+        NexaPrimaryButton(
+          label: _submitting ? 'Sending…' : 'Send reset link',
+          busy: _submitting,
+          onTap: _submitting ? null : _submit,
+        ),
       ],
     );
   }
 }
 
-/// The square glyph tile in front of a provider's name. The tile is unchanged
-/// from the design — only what sits inside it is a real mark now.
-class _ProviderGlyph extends StatelessWidget {
-  const _ProviderGlyph({required this.brand});
-
-  final AuthBrand brand;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 22,
-      height: 22,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: ProviderGlyph(brand: brand),
-    );
-  }
-}
-
-/// A hairline, the word "or", a hairline.
+/// A hairline, the words "or use email", a hairline.
 class _OrDivider extends StatelessWidget {
   const _OrDivider();
 
@@ -404,35 +801,28 @@ class _OrDivider extends StatelessWidget {
     final c = NexaColors.of(context);
     return Row(
       children: [
-        const Expanded(child: _Hairline()),
+        Expanded(child: _Hairline(c)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Text(
-            'OR',
-            style: NexaType.label(
-              size: 11,
-              tracking: 0.18,
-              color: c.ink30,
-            ),
+            'OR USE EMAIL',
+            style: NexaType.label(size: 10.5, tracking: 0.18, color: c.ink32),
           ),
         ),
-        const Expanded(child: _Hairline()),
+        Expanded(child: _Hairline(c)),
       ],
     );
   }
 }
 
 class _Hairline extends StatelessWidget {
-  const _Hairline();
+  const _Hairline(this.c);
+
+  final NexaPalette c;
 
   @override
-  Widget build(BuildContext context) {
-    final c = NexaColors.of(context);
-    return SizedBox(
-      height: 1,
-      child: DecoratedBox(
-        decoration: BoxDecoration(color: c.hairlineStrong),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => SizedBox(
+        height: 1,
+        child: DecoratedBox(decoration: BoxDecoration(color: c.hairlineStrong)),
+      );
 }

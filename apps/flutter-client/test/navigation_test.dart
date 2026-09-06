@@ -2,19 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nexa_client/app_state.dart';
 import 'package:nexa_client/data/models/device.dart';
+import 'package:nexa_client/data/models/memory_entry.dart';
 import 'package:nexa_client/data/repositories/device_repository.dart';
+import 'package:nexa_client/data/repositories/memory_repository.dart';
 import 'package:nexa_client/data/repositories/pairing.dart';
 import 'package:nexa_client/main.dart';
 import 'package:nexa_client/widgets/nexa_controls.dart';
 import 'package:nexa_client/theme/nexa_theme.dart';
 
 /// Mounts the app at a phone size with the given state.
-Future<NexaAppState> _pump(WidgetTester tester, {NexaScreen? at}) async {
+///
+/// [devices]/[memories] are for the handful of tests that need something
+/// real to find or forget — production starts both empty (see the report),
+/// so a test that needs a paired device or a kept memory brings its own
+/// fixture rather than leaning on a seed that no longer exists.
+Future<NexaAppState> _pump(
+  WidgetTester tester, {
+  NexaScreen? at,
+  DeviceRepository? devices,
+  MemoryRepository? memories,
+}) async {
   tester.view.physicalSize = const Size(390 * 3, 844 * 3);
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.reset);
 
-  final state = NexaAppState();
+  final state = NexaAppState(devices: devices, memories: memories);
   addTearDown(state.dispose);
   if (at != null) state.go(at);
 
@@ -71,7 +83,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     expect(state.screen, NexaScreen.memory);
-    expect(find.text('What Nexa keeps about you.'), findsOneWidget);
+    // A fresh account has kept nothing yet, so this lands on the real
+    // empty state rather than the populated subtitle.
+    expect(find.text("Nexa hasn't remembered anything yet."), findsOneWidget);
 
     await tester.tap(find.text('Devices'));
     await tester.pump();
@@ -121,8 +135,10 @@ void main() {
     final state = await _pump(tester, at: NexaScreen.devices);
     expect(state.pairingPhase, PairingPhase.idle);
 
-    // The hub shows only what the account owns; the catalogue is a tap away.
-    expect(find.text('YOUR DEVICES'), findsOneWidget);
+    // A fresh account starts with nothing paired — the real empty state,
+    // not a seeded device.
+    expect(find.text('No devices yet.'), findsOneWidget);
+    expect(find.text('YOUR DEVICES'), findsNothing);
     expect(find.text('Meta Quest 3S'), findsNothing);
 
     await tester.tap(find.text('Add device'));
@@ -130,6 +146,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 700));
     expect(state.screen, NexaScreen.connect);
     expect(find.text('Choose where Nexa should live next.'), findsOneWidget);
+    // Third card down now that Quest 3 and Watch are real catalogue entries
+    // ahead of it (see the report) — the list is lazy, so it has to be
+    // scrolled to, same as the other cards this file already reveals.
+    await _reveal(tester, find.text('Meta Quest 3S'));
     expect(find.text('Meta Quest 3S'), findsOneWidget);
 
     // Quest 3S is available, so it offers the guided flow.
@@ -262,7 +282,15 @@ void main() {
   testWidgets('the hub separates owned devices from the catalogue', (
     tester,
   ) async {
-    final state = await _pump(tester, at: NexaScreen.devices);
+    // A fresh account starts with nothing paired (see the report), so this
+    // test — which is specifically about separating owned devices from the
+    // catalogue — brings its own fixture with one real paired device rather
+    // than relying on a production seed that no longer exists.
+    final state = await _pump(
+      tester,
+      at: NexaScreen.devices,
+      devices: LocalDeviceRepository()..markPaired('quest3'),
+    );
     final mine = state.deviceRepository.mine();
     final pairable = state.deviceRepository.pairable();
     final soon = state.deviceRepository.comingSoon();
@@ -306,8 +334,9 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    // Not reachable from the demo data — the account always has the phone it
-    // is running on — but it is a real state for an account that has none.
+    // The production default now starts here too (see the report), but this
+    // fixture keeps the test explicit about which state it means to exercise
+    // rather than relying on that default silently staying empty.
     final state = NexaAppState(devices: _EmptyDevices());
     addTearDown(state.dispose);
     state.go(NexaScreen.devices);
@@ -326,7 +355,13 @@ void main() {
   });
 
   testWidgets('a paired device is never offered pairing', (tester) async {
-    final state = await _pump(tester, at: NexaScreen.devices);
+    // Same reasoning as the test above: a fresh account has nothing paired,
+    // so this needs its own fixture to have anything to iterate at all.
+    final state = await _pump(
+      tester,
+      at: NexaScreen.devices,
+      devices: LocalDeviceRepository()..markPaired('quest3'),
+    );
 
     for (final d in state.deviceRepository.mine()) {
       state.openDevice(d.id);
@@ -465,7 +500,14 @@ void main() {
   });
 
   testWidgets('a memory can be opened and forgotten', (tester) async {
-    final state = await _pump(tester, at: NexaScreen.memory);
+    // Production starts with nothing kept (see the report), so this test —
+    // whose whole point is forgetting a real entry — brings its own
+    // fixture rather than relying on a seed that no longer exists.
+    final state = await _pump(
+      tester,
+      at: NexaScreen.memory,
+      memories: _FixtureMemories(),
+    );
     await tester.pump(const Duration(milliseconds: 700));
 
     final before = state.memoryRepository.count;
@@ -539,25 +581,35 @@ void main() {
     expect(state.screen, NexaScreen.profile);
   });
 
-  testWidgets('back from an auth sub-mode returns to the method choice', (
+  testWidgets('a provider tap is honest — it says so, it does not navigate', (
     tester,
   ) async {
     final state = await _pump(tester, at: NexaScreen.signup);
 
-    await tester.tap(find.text('Continue with phone'));
+    await tester.tap(find.text('Continue with Meta'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 700));
-    expect(state.authMode, AuthMode.phone);
+    await tester.pump(const Duration(milliseconds: 300));
 
-    await tester.tap(find.text('←'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 700));
-
-    // Back belongs to the sub-mode first — it must not drop the user out of
-    // signing in altogether.
+    // Still on sign-up — no fake OAuth navigation — with an honest line.
     expect(state.screen, NexaScreen.signup);
-    expect(state.authMode, AuthMode.providers);
+    expect(find.textContaining('Meta sign-in isn’t connected yet'),
+        findsOneWidget);
     expect(find.text('Continue with Google'), findsOneWidget);
+  });
+
+  testWidgets('the email form is on the auth surface, not behind a sub-mode', (
+    tester,
+  ) async {
+    await _pump(tester, at: NexaScreen.login);
+
+    // Providers and the real form are both present immediately — no
+    // "continue with email" step in between.
+    expect(find.text('Welcome back.'), findsOneWidget);
+    expect(find.text('OR USE EMAIL'), findsOneWidget);
+    expect(find.text('EMAIL'), findsOneWidget);
+    expect(find.text('PASSWORD'), findsOneWidget);
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Forgot password?'), findsOneWidget);
   });
 
   testWidgets('changing a preference is reflected back in the tree', (
@@ -624,4 +676,49 @@ class _EmptyDevices implements DeviceRepository {
 
   @override
   void forget(String id) => _local.forget(id);
+}
+
+/// A fixture with exactly one entry, for the tests that need something real
+/// to open and forget. Production starts empty (see the report), so this is
+/// test data kept separate from it, not a restored seed.
+class _FixtureMemories implements MemoryRepository {
+  final List<MemoryEntry> _entries = [
+    const MemoryEntry(
+      id: 'm1',
+      text: 'A fixture entry, not a real memory.',
+      when: 'today',
+      kind: MemoryKind.preference,
+      important: true,
+    ),
+  ];
+
+  @override
+  List<MemoryEntry> all() => List.unmodifiable(_entries);
+
+  @override
+  List<MemoryEntry> byFilter(MemoryFilter filter) => all();
+
+  @override
+  MemoryEntry? byId(String id) {
+    for (final e in _entries) {
+      if (e.id == id) return e;
+    }
+    return null;
+  }
+
+  @override
+  int get count => _entries.length;
+
+  @override
+  int get importantCount => _entries.where((e) => e.important).length;
+
+  @override
+  int get peopleCount =>
+      _entries.where((e) => e.kind == MemoryKind.people).length;
+
+  @override
+  void forget(String id) => _entries.removeWhere((e) => e.id == id);
+
+  @override
+  void forgetAll() => _entries.clear();
 }

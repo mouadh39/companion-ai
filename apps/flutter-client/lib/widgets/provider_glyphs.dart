@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 /// The identity providers the auth screen offers.
-enum AuthBrand { google, apple, meta }
+enum AuthBrand { google, apple, meta, passkey }
 
 /// A provider mark, drawn monochrome at whatever size it is given.
 ///
@@ -41,8 +41,39 @@ class ProviderGlyph extends StatelessWidget {
         size: Size.square(size + 1),
         painter: _MetaPainter(color),
       ),
+      AuthBrand.passkey => CustomPaint(
+        size: Size.square(size + 1),
+        painter: _PasskeyPainter(color),
+      ),
     };
   }
+}
+
+/// A passkey: a keyhole ring with a stepped shaft running out of it, matching
+/// the authoritative design's own glyph.
+class _PasskeyPainter extends CustomPainter {
+  const _PasskeyPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    canvas.drawCircle(Offset(9.2 * s, 9.6 * s), 4.4 * s, paint);
+    canvas.drawLine(Offset(12.4 * s, 12.8 * s), Offset(19 * s, 19.4 * s), paint);
+    canvas.drawLine(Offset(16.4 * s, 16.8 * s), Offset(18 * s, 15.2 * s), paint);
+    canvas.drawLine(Offset(18.2 * s, 18.6 * s), Offset(19.6 * s, 17.2 * s), paint);
+  }
+
+  @override
+  bool shouldRepaint(_PasskeyPainter old) => old.color != color;
 }
 
 /// The Google G: a near-closed ring opening at three o'clock, with the

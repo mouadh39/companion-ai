@@ -59,6 +59,7 @@ class NexaPrimaryButton extends StatelessWidget {
     required this.label,
     this.onTap,
     this.trailing,
+    this.busy = false,
   });
 
   final String label;
@@ -66,6 +67,11 @@ class NexaPrimaryButton extends StatelessWidget {
 
   /// The arrow the welcome and pairing CTAs carry.
   final String? trailing;
+
+  /// Shows a small spinner before the label and holds the button at a
+  /// working opacity — for an action that has been submitted and is waiting
+  /// on the network.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +82,7 @@ class NexaPrimaryButton extends StatelessWidget {
         // Without an action the button is not gone, it is not yet available —
         // it dims rather than disappearing, so the layout does not jump.
         duration: NexaMotion.medium,
-        opacity: onTap == null ? 0.32 : 1,
+        opacity: onTap == null ? (busy ? 0.66 : 0.32) : 1,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 17),
           decoration: BoxDecoration(
@@ -86,6 +92,10 @@ class NexaPrimaryButton extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              if (busy) ...[
+                _Spinner(color: c.onInk),
+                const SizedBox(width: 10),
+              ],
               // The label can be a name the user typed, so it has to survive
               // being longer than the button.
               Flexible(
@@ -101,7 +111,7 @@ class NexaPrimaryButton extends StatelessWidget {
                   ),
                 ),
               ),
-              if (trailing != null) ...[
+              if (trailing != null && !busy) ...[
                 const SizedBox(width: 10),
                 Text(
                   trailing!,
@@ -114,6 +124,78 @@ class NexaPrimaryButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A small indeterminate ring — the one spinner in the app, on a busy
+/// primary button.
+class _Spinner extends StatefulWidget {
+  const _Spinner({required this.color});
+
+  final Color color;
+
+  @override
+  State<_Spinner> createState() => _SpinnerState();
+}
+
+class _SpinnerState extends State<_Spinner> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 800),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = NexaColors.reducedMotion(context);
+    if (reduced && _c.isAnimating) {
+      _c.stop();
+    } else if (!reduced && !_c.isAnimating) {
+      _c.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ring = SizedBox(
+      width: 14,
+      height: 14,
+      child: CustomPaint(painter: _RingPainter(widget.color)),
+    );
+    if (NexaColors.reducedMotion(context)) return ring;
+    return RotationTransition(turns: _c, child: ring);
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  const _RingPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    // Three-quarters of a ring, so the rotation reads.
+    canvas.drawArc(
+      Offset.zero & size,
+      -1.2,
+      4.7,
+      false,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter old) => old.color != color;
 }
 
 /// The quiet alternative under a primary action — text only, no container.
@@ -298,7 +380,9 @@ class NexaField extends StatelessWidget {
     this.textSize = 20,
     this.prefix,
     this.autofocus = false,
+    this.obscureText = false,
     this.onSubmitted,
+    this.trailing,
   });
 
   final String? label;
@@ -308,7 +392,18 @@ class NexaField extends StatelessWidget {
   final double textSize;
   final String? prefix;
   final bool autofocus;
+
+  /// Hides what is typed — a password field's own request. Every existing
+  /// field leaves this at its default `false`, so nothing about how they
+  /// look or behave changes.
+  final bool obscureText;
   final ValueChanged<String>? onSubmitted;
+
+  /// An optional control at the end of the row, alongside the text —
+  /// a password field's "Show"/"Hide" toggle, in the design's own bare-text
+  /// idiom rather than an icon. `null` for every existing field, so nothing
+  /// about how they look changes.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -346,6 +441,7 @@ class NexaField extends StatelessWidget {
                   controller: controller,
                   autofocus: autofocus,
                   keyboardType: keyboardType,
+                  obscureText: obscureText,
                   onSubmitted: onSubmitted,
                   style: NexaType.ui(size: textSize, color: c.ink),
                   cursorColor: c.emerald,
@@ -359,6 +455,10 @@ class NexaField extends StatelessWidget {
                   ),
                 ),
               ),
+              if (trailing != null) ...[
+                const SizedBox(width: 12),
+                trailing!,
+              ],
             ],
           ),
         ),

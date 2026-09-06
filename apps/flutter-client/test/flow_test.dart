@@ -127,18 +127,18 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    // Sign up, on the provider list.
+    // Sign up: providers on top, the real email form below.
     expect(find.text('Welcome to Nexa'), findsOneWidget);
     expect(find.text('Continue with Google'), findsOneWidget);
-    expect(find.text('Use a passkey'), findsOneWidget);
-
-    await tester.tap(find.text('Continue with email'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Continue with a passkey'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, 'mouadh@example.com');
     await tester.enterText(find.byType(TextField).at(1), 'a-real-password');
     await tester.enterText(find.byType(TextField).at(2), 'a-real-password');
+    // The submit button sits below the providers + form on the scrolling
+    // auth surface.
+    await tester.ensureVisible(find.text('Create account'));
+    await tester.pump();
     await tester.tap(find.text('Create account'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
@@ -225,35 +225,37 @@ void main() {
     expect(find.text('Nexa is here'), findsOneWidget);
   });
 
-  testWidgets('auth swaps between its four modes on one surface', (
-    tester,
-  ) async {
+  testWidgets('auth shows providers honestly and the real email form on one '
+      'surface', (tester) async {
     tester.view.physicalSize = const Size(390 * 3, 844 * 3);
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    final state = NexaAppState();
+    final state = NexaAppState(skipEntrance: true);
     addTearDown(state.dispose);
     state.go(NexaScreen.login);
 
-    await tester.pumpWidget(
-      nexaTestHost(state),
-    );
+    await tester.pumpWidget(nexaTestHost(state));
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('Welcome back.'), findsOneWidget);
 
-    await tester.tap(find.text('Continue with phone'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.text('What is your number?'), findsOneWidget);
-    expect(find.text('+1'), findsOneWidget);
+    // All four providers are drawn, and the email form is right there too.
+    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.text('Continue with Apple'), findsOneWidget);
+    expect(find.text('Continue with Meta'), findsOneWidget);
+    expect(find.text('Continue with a passkey'), findsOneWidget);
+    expect(find.text('OR USE EMAIL'), findsOneWidget);
+    expect(find.text('EMAIL'), findsOneWidget);
+    expect(find.text('PASSWORD'), findsOneWidget);
 
-    state.setAuthMode(AuthMode.passkey);
+    // Tapping a provider is honest — it says so, it does not navigate.
+    await tester.tap(find.text('Continue with Google'));
     await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.text('Use your passkey.'), findsOneWidget);
-    expect(find.text('Confirm with your device'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(state.screen, NexaScreen.login);
+    expect(find.textContaining("isn’t connected yet"), findsOneWidget);
 
+    // Forgot password is still one tap away.
     state.go(NexaScreen.forgot);
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));

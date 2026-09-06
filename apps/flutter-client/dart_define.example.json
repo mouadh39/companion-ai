@@ -1,0 +1,7 @@
+{
+  "_comment": "Run/build the client against the real nexa-dev Supabase project: flutter run --dart-define-from-file=dart_define.example.json  (values here are the project's PUBLIC API address and its anon/publishable key — safe to commit by Supabase's own design; RLS is what protects data. The service-role key and SUPABASE_JWT_SECRET must never appear here.)",
+  "SUPABASE_URL": "https://qjkcvyohaccbykrqymdr.supabase.co",
+  "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqa2N2eW9oYWNjYnlrcnF5bWRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MDI2ODAsImV4cCI6MjEwMzM3ODY4MH0.4tUu3RR7KegyTDaAj4kqx0Cap-qYKv95yRkxe-nmRBI",
+  "_NEXA_BACKEND_URL_note": "Empty until the Nexa backend (apps/backend) is deployed with SUPABASE_JWT_SECRET + DATABASE_URL. Until then ProfileRepository / PhoneDeviceRepository / PairingSessionRepository honestly throw BackendNotConfiguredException and the UI shows its real error/empty states. For a local backend on the Android emulator use http://10.0.2.2:3000",
+  "NEXA_BACKEND_URL": ""
+}
