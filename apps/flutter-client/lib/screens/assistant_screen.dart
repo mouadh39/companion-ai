@@ -3,7 +3,9 @@ import 'package:flutter/widgets.dart';
 import '../app_state.dart';
 import '../theme/nexa_theme.dart';
 import '../widgets/nexa_controls.dart';
+import '../widgets/nexa_glass.dart';
 import '../widgets/nexa_mark.dart';
+import '../widgets/nexa_page.dart';
 
 /// The home screen, and the argument the whole design makes: there is no chat
 /// log and no waveform. The mark is the interface. Its size, glow and tempo
@@ -44,6 +46,47 @@ class AssistantScreen extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
+          // Two quiet, static blooms far off the mark's own halo — the
+          // atmosphere that keeps the screen reading as a lit space rather
+          // than the mark floating on a flat panel.
+          Positioned(
+            top: -80,
+            left: -60,
+            child: IgnorePointer(
+              child: Container(
+                width: 260,
+                height: 260,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      c.emerald.withValues(alpha: c.isDark ? 0.06 : 0.09),
+                      c.emerald.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -100,
+            right: -70,
+            child: IgnorePointer(
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      c.emerald.withValues(alpha: c.isDark ? 0.05 : 0.07),
+                      c.emerald.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
           Align(
             alignment: const Alignment(0, -0.32),
             child: NexaHalo(
@@ -128,61 +171,75 @@ class AssistantScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (live)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Column(
-                        children: [
-                          Text(
-                            listening ? 'YOU' : 'NEXA',
-                            style: NexaType.label(
-                              size: 11,
-                              color: c.emerald,
-                              weight: FontWeight.w400,
+                  // Who has the turn (a bordered emerald pill with a live
+                  // dot) while Nexa is live; a quiet "tap to speak" hint when
+                  // she is idle. There is no real transcript to show yet —
+                  // speech and a turn pipeline are not wired client-side —
+                  // and this screen's design is built around not needing one.
+                  SizedBox(
+                    height: 24,
+                    child: Center(
+                      child: live
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 13,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: c.emeraldWash,
+                                borderRadius: NexaRadius.pillAll,
+                                border: Border.all(
+                                  color: c.emeraldBorder,
+                                  width: 1,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  NexaStatusDot(color: c.emerald),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    listening ? 'YOU' : 'NEXA',
+                                    style: NexaType.label(
+                                      size: 10,
+                                      color: c.emeraldBright,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : Text(
+                              'TAP TO SPEAK',
+                              style: NexaType.label(
+                                size: 11,
+                                tracking: 0.16,
+                                color: c.ink32,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            listening
-                                ? 'Remind me what we decided about the launch…'
-                                : 'You settled on the fourteenth, and asked me '
-                                      'to keep that morning clear.',
-                            textAlign: TextAlign.center,
-                            style: NexaType.ui(
-                              size: 20,
-                              color: c.ink90,
-                              height: 1.44,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                  const SizedBox(height: 26),
+                  ),
+                  const SizedBox(height: 22),
                   Row(
                     children: [
                       Expanded(
-                        child: NexaPressable(
+                        child: NexaGlassCard(
                           onTap: () => state.goTab(NexaTab.memory),
-                          scale: 0.985,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 15,
-                            ),
-                            decoration: BoxDecoration(
-                              color: c.surfaceQuiet,
-                              borderRadius: NexaRadius.pillAll,
-                              border: Border.all(
-                                color: c.hairlineStrong,
-                                width: 1,
-                              ),
-                            ),
-                            child: Text(
-                              'Earlier today',
-                              style: NexaType.ui(
-                                size: 14,
-                                color: c.ink50,
-                              ),
+                          blur: 14,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 15,
+                          ),
+                          child: Text(
+                            // Not "Earlier today" — that claimed history
+                            // that may not exist yet. This opens Memory
+                            // either way, whether it has something to show
+                            // or its own empty state. ("Memories" rather
+                            // than "Memory" so it reads distinctly from
+                            // the tab bar's own label just below it.)
+                            'Memories',
+                            style: NexaType.ui(
+                              size: 14,
+                              color: c.ink50,
                             ),
                           ),
                         ),
@@ -266,18 +323,18 @@ class _RoundIconButton extends StatelessWidget {
         width: 44,
         height: 44,
         child: Center(
-          child: Container(
-            width: 38,
-            height: 38,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: c.surfaceLift,
-              shape: BoxShape.circle,
-              border: Border.all(color: c.hairlineStrong, width: 1),
-            ),
-            child: Text(
-              glyph,
-              style: NexaType.ui(size: 15, color: c.ink55),
+          child: NexaGlassSurface(
+            radius: BorderRadius.circular(19),
+            blur: 12,
+            child: SizedBox(
+              width: 38,
+              height: 38,
+              child: Center(
+                child: Text(
+                  glyph,
+                  style: NexaType.ui(size: 15, color: c.ink55),
+                ),
+              ),
             ),
           ),
         ),

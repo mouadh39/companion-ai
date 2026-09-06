@@ -8,6 +8,7 @@ import '../../widgets/nexa_glass.dart';
 import '../../widgets/nexa_icons.dart';
 import '../../widgets/nexa_mark.dart';
 import '../../widgets/nexa_page.dart';
+import '../../widgets/nexa_wordmark.dart';
 
 // ---------------------------------------------------------------------------
 // Settings — the hub.
@@ -20,6 +21,7 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
     final state = NexaScope.of(context);
     final prefs = state.prefs;
     final repo = state.preferencesRepository;
@@ -124,6 +126,19 @@ class SettingsScreen extends StatelessWidget {
 
         const SizedBox(height: 22),
         NexaOutlineButton(label: 'Log out', danger: true, onTap: state.logOut),
+
+        const SizedBox(height: 26),
+        Opacity(
+          opacity: 0.34,
+          child: Center(child: NexaWordmark(size: 12, tracking: 0.5)),
+        ),
+        const SizedBox(height: 10),
+        Center(
+          child: Text(
+            'Personal AI · Spatial computing',
+            style: NexaType.ui(size: 11, color: c.ink30),
+          ),
+        ),
       ],
     );
   }
