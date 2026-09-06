@@ -4,6 +4,8 @@ import '../../app_state.dart';
 import '../../data/models/preferences.dart';
 import '../../theme/nexa_theme.dart';
 import '../../widgets/nexa_controls.dart';
+import '../../widgets/nexa_glass.dart';
+import '../../widgets/nexa_icons.dart';
 import '../../widgets/nexa_mark.dart';
 import '../../widgets/nexa_page.dart';
 
@@ -27,15 +29,24 @@ class SettingsScreen extends StatelessWidget {
       subtitle: 'Everything about your Nexa.',
       onBack: () => state.back(fallback: NexaScreen.profile),
       children: [
+        NexaSectionLabel('Appearance'),
+        _ThemeSegmented(
+          selected: prefs.theme,
+          onPick: (t) => state.updatePrefs(prefs.copyWith(theme: t)),
+        ),
+
+        const SizedBox(height: 22),
         NexaSectionLabel('Experience'),
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.voice,
               label: 'Voice',
               value: repo.voices.firstWhere((v) => v.id == prefs.voiceId).name,
               onTap: () => state.go(NexaScreen.settingsVoice),
             ),
             NexaRow(
+              icon: NexaIcon.theme,
               label: 'Appearance',
               value: repo.appearances
                   .firstWhere((a) => a.id == prefs.appearanceId)
@@ -43,11 +54,13 @@ class SettingsScreen extends StatelessWidget {
               onTap: () => state.go(NexaScreen.settingsAppearance),
             ),
             NexaRow(
+              icon: NexaIcon.assistant,
               label: 'Nexa',
               value: 'Presence',
               onTap: () => state.go(NexaScreen.settingsNexa),
             ),
             NexaRow(
+              icon: NexaIcon.notifications,
               label: 'Notifications',
               onTap: () => state.go(NexaScreen.settingsNotifications),
             ),
@@ -59,11 +72,13 @@ class SettingsScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.memory,
               label: 'Memory',
               value: '${state.memoryRepository.count} kept',
               onTap: () => state.go(NexaScreen.settingsMemory),
             ),
             NexaRow(
+              icon: NexaIcon.privacy,
               label: 'Privacy',
               onTap: () => state.go(NexaScreen.privacy),
             ),
@@ -75,15 +90,20 @@ class SettingsScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.profile,
               label: 'Profile',
-              value: state.displayName,
+              value: (state.firstName.isEmpty && state.username.isEmpty)
+                  ? 'Not set up'
+                  : state.displayName,
               onTap: () => state.go(NexaScreen.account),
             ),
             NexaRow(
+              icon: NexaIcon.privacy,
               label: 'Security',
               onTap: () => state.go(NexaScreen.security),
             ),
             NexaRow(
+              icon: NexaIcon.devices,
               label: 'Paired devices',
               value: '${state.deviceRepository.mine().length}',
               onTap: () => state.goTab(NexaTab.devices),
@@ -95,6 +115,7 @@ class SettingsScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.help,
               label: 'About Nexa',
               onTap: () => state.go(NexaScreen.about),
             ),
@@ -104,6 +125,83 @@ class SettingsScreen extends StatelessWidget {
         const SizedBox(height: 22),
         NexaOutlineButton(label: 'Log out', danger: true, onTap: state.logOut),
       ],
+    );
+  }
+}
+
+/// The System / Light / Dark control, promoted onto the Settings root the
+/// way the approved design puts it there — a live segmented switch on a solid
+/// group card, with a one-line note for the current choice. The full
+/// Appearance screen (material, motion, the mark preview) is still one tap
+/// deeper.
+class _ThemeSegmented extends StatelessWidget {
+  const _ThemeSegmented({required this.selected, required this.onPick});
+
+  final ThemeChoice selected;
+  final ValueChanged<ThemeChoice> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: c.group,
+        borderRadius: NexaRadius.groupAll,
+        border: Border.all(color: c.hairlineStrong, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: c.surfaceQuiet,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                for (final t in ThemeChoice.values)
+                  Expanded(
+                    child: NexaPressable(
+                      onTap: () => onPick(t),
+                      scale: 0.97,
+                      child: AnimatedContainer(
+                        duration: NexaMotion.fast,
+                        curve: NexaMotion.curve,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: t == selected ? c.emeraldWash : null,
+                          borderRadius: BorderRadius.circular(11),
+                          border: Border.all(
+                            color: t == selected
+                                ? c.emeraldBorder
+                                : const Color(0x00000000),
+                            width: 1,
+                          ),
+                        ),
+                        child: Text(
+                          t.label,
+                          style: NexaType.ui(
+                            size: 12.5,
+                            weight: FontWeight.w500,
+                            color: t == selected ? c.emeraldBright : c.ink50,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            selected.note,
+            style: NexaType.body(size: 12.5, color: c.ink42).copyWith(height: 1.6),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -244,13 +342,9 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
         ),
         if (_previewing != null) ...[
           const SizedBox(height: 14),
-          Container(
+          NexaGlassSurface(
+            blur: 14,
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            decoration: BoxDecoration(
-              color: c.surfaceQuiet,
-              borderRadius: NexaRadius.groupAll,
-              border: Border.all(color: c.hairline, width: 1),
-            ),
             child: Text(
               'Preview needs a connection to Nexa. It will play here once '
               'the voice service is reachable.',
@@ -284,21 +378,13 @@ class _VoiceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return NexaPressable(
+    return NexaGlassCard(
       onTap: onSelect,
-      scale: 0.99,
-      child: AnimatedContainer(
-        duration: NexaMotion.fast,
-        padding: const EdgeInsets.fromLTRB(20, 18, 14, 18),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0x1C4ADE9B) : c.card,
-          borderRadius: NexaRadius.groupAll,
-          border: Border.all(
-            color: selected ? c.emeraldBorder : c.hairline,
-            width: 1,
-          ),
-        ),
-        child: Row(
+      blur: 12,
+      padding: const EdgeInsets.fromLTRB(20, 18, 14, 18),
+      tint: selected ? const Color(0x1C4ADE9B) : null,
+      borderColor: selected ? c.emeraldBorder : c.glassBorder,
+      child: Row(
           children: [
             Expanded(
               child: Column(
@@ -350,7 +436,6 @@ class _VoiceCard extends StatelessWidget {
               ),
             ),
           ],
-        ),
       ),
     );
   }
@@ -434,6 +519,7 @@ class AppearanceSettingsScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaToggleRow(
+              icon: NexaIcon.theme,
               label: 'Reduced motion',
               note: 'Nexa still breathes, but nothing drifts or travels.',
               value: prefs.reducedMotion,
@@ -476,6 +562,7 @@ class NotificationSettingsScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaToggleRow(
+              icon: NexaIcon.memory,
               label: 'Something remembered',
               note: 'When she keeps something that matters.',
               value: prefs.notifyMemory,
@@ -483,6 +570,7 @@ class NotificationSettingsScreen extends StatelessWidget {
                   state.updatePrefs(prefs.copyWith(notifyMemory: v)),
             ),
             NexaToggleRow(
+              icon: NexaIcon.devices,
               label: 'Device activity',
               note: 'Pairing, disconnection, a new sign-in.',
               value: prefs.notifyDevices,
@@ -490,6 +578,7 @@ class NotificationSettingsScreen extends StatelessWidget {
                   state.updatePrefs(prefs.copyWith(notifyDevices: v)),
             ),
             NexaToggleRow(
+              icon: NexaIcon.assistant,
               label: 'New in Nexa',
               note: 'When she arrives on a device you own.',
               value: prefs.notifyProduct,
@@ -540,11 +629,13 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.memory,
               label: 'What Nexa remembers',
               value: '$count kept',
               onTap: () => state.goTab(NexaTab.memory),
             ),
             NexaToggleRow(
+              icon: NexaIcon.data,
               label: 'Remember new things',
               note: 'When off, she answers but keeps nothing new.',
               value: prefs.rememberNewThings,
@@ -552,6 +643,7 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
                   state.updatePrefs(prefs.copyWith(rememberNewThings: v)),
             ),
             NexaToggleRow(
+              icon: NexaIcon.profile,
               label: 'Remember people',
               note: 'Names and relationships you mention.',
               value: prefs.rememberPeople,
@@ -580,10 +672,12 @@ class _MemorySettingsScreenState extends State<MemorySettingsScreen> {
           NexaGroup(
             children: [
               NexaRow(
+                icon: NexaIcon.memory,
                 label: 'Forget a memory',
                 onTap: () => state.goTab(NexaTab.memory),
               ),
               NexaRow(
+                icon: NexaIcon.data,
                 label: 'Forget everything',
                 danger: true,
                 onTap: () => setState(() => _confirming = true),
@@ -626,6 +720,7 @@ class PrivacyScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaToggleRow(
+              icon: NexaIcon.memory,
               label: 'Keep conversations',
               note: 'Kept on your account so she can refer back to them.',
               value: prefs.conversationHistory,
@@ -633,6 +728,7 @@ class PrivacyScreen extends StatelessWidget {
                   state.updatePrefs(prefs.copyWith(conversationHistory: v)),
             ),
             NexaToggleRow(
+              icon: NexaIcon.voice,
               label: 'Store voice recordings',
               note: 'Off by default. Nexa works from the words, not the audio.',
               value: prefs.storeVoiceRecordings,
@@ -647,6 +743,7 @@ class PrivacyScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.devices,
               label: 'What Nexa can see',
               value: 'Headset only',
               note:
@@ -661,10 +758,12 @@ class PrivacyScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.data,
               label: 'Download your data',
               value: 'Not available yet',
             ),
             NexaRow(
+              icon: NexaIcon.memory,
               label: 'Memory controls',
               onTap: () => state.go(NexaScreen.settingsMemory),
             ),
@@ -700,15 +799,28 @@ class AccountScreen extends StatelessWidget {
       subtitle: 'Who Nexa thinks you are.',
       onBack: () => state.back(fallback: NexaScreen.profile),
       children: [
+        if (state.firstName.isEmpty || state.username.isEmpty) ...[
+          NexaEmeraldButton(
+            label: 'Complete your profile',
+            onTap: () => state.go(NexaScreen.meeting),
+          ),
+          const SizedBox(height: 22),
+        ],
         NexaSectionLabel('Identity'),
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.profile,
               label: 'Name',
               value: state.firstName.isEmpty ? 'Not set' : state.firstName,
               note: 'What Nexa calls you.',
             ),
-            NexaRow(label: 'Email', value: state.email),
+            NexaRow(
+              icon: NexaIcon.account,
+              label: 'Username',
+              value: state.username.isEmpty ? 'Not set' : '@${state.username}',
+            ),
+            NexaRow(icon: NexaIcon.connectedApps, label: 'Email', value: state.email),
           ],
         ),
 
@@ -717,11 +829,13 @@ class AccountScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.memory,
               label: 'Memories kept',
               value: '${state.memoryRepository.count}',
               onTap: () => state.goTab(NexaTab.memory),
             ),
             NexaRow(
+              icon: NexaIcon.devices,
               label: 'Devices paired',
               value: '${state.deviceRepository.mine().length}',
               onTap: () => state.goTab(NexaTab.devices),
@@ -733,10 +847,12 @@ class AccountScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.privacy,
               label: 'Security',
               onTap: () => state.go(NexaScreen.security),
             ),
             NexaRow(
+              icon: NexaIcon.privacy,
               label: 'Privacy',
               onTap: () => state.go(NexaScreen.privacy),
             ),
@@ -769,7 +885,14 @@ class SecurityScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
     final state = NexaScope.of(context);
-    final active = state.preferencesRepository.activeSignInMethods;
+    // Email is reported from the real, verifiable session — not from
+    // `preferencesRepository`, which has no way to know how an account
+    // authenticated. Every other method stays whatever that repository
+    // says, which is honestly "not added" until one of them is real too.
+    final active = {
+      if (state.authSession.isSignedIn) SignInMethod.email,
+      ...state.preferencesRepository.activeSignInMethods,
+    };
     final devices = state.deviceRepository.mine().length;
 
     return NexaPage(
@@ -782,6 +905,7 @@ class SecurityScreen extends StatelessWidget {
           children: [
             for (final m in SignInMethod.values)
               NexaRow(
+                icon: NexaIcon.privacy,
                 label: m.label,
                 value: active.contains(m) ? 'On this account' : 'Not added',
                 trailing: active.contains(m)
@@ -809,11 +933,16 @@ class SecurityScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.devices,
               label: 'Signed in on',
               value: '$devices devices',
               onTap: () => state.goTab(NexaTab.devices),
             ),
-            NexaRow(label: 'Two-step verification', value: 'Off'),
+            NexaRow(
+              icon: NexaIcon.privacy,
+              label: 'Two-step verification',
+              value: 'Off',
+            ),
           ],
         ),
 
@@ -821,7 +950,7 @@ class SecurityScreen extends StatelessWidget {
         NexaSectionLabel('Account'),
         NexaGroup(
           children: [
-            NexaRow(label: 'Delete account', danger: true),
+            NexaRow(icon: NexaIcon.data, label: 'Delete account', danger: true),
           ],
         ),
         const SizedBox(height: 14),
@@ -871,8 +1000,7 @@ class AboutScreen extends StatelessWidget {
     final c = NexaColors.of(context);
     final state = NexaScope.of(context);
 
-    return DecoratedBox(
-      decoration: BoxDecoration(color: c.void_),
+    return NexaAtmosphere(
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(30, 46, 30, 130),
@@ -1016,13 +1144,11 @@ class _DangerConfirm extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return Container(
+    return NexaGlassSurface(
+      blur: 14,
+      tint: const Color(0x1AF0A08A),
+      borderColor: const Color(0x33F0A08A),
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-      decoration: BoxDecoration(
-        color: const Color(0x0FF0A08A),
-        borderRadius: NexaRadius.groupAll,
-        border: Border.all(color: const Color(0x33F0A08A), width: 1),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

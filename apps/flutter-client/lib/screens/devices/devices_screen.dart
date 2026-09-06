@@ -5,6 +5,7 @@ import '../../data/models/device.dart';
 import '../../theme/nexa_theme.dart';
 import '../../widgets/device_visual.dart';
 import '../../widgets/nexa_controls.dart';
+import '../../widgets/nexa_glass.dart';
 import '../../widgets/nexa_mark.dart';
 import '../../widgets/nexa_page.dart';
 
@@ -89,59 +90,55 @@ class _AddDeviceButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
 
-    return NexaPressable(
+    return NexaGlassCard(
       onTap: onTap,
-      scale: 0.985,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        decoration: BoxDecoration(
-          color: c.emeraldWash,
-          borderRadius: NexaRadius.groupAll,
-          border: Border.all(color: c.emeraldBorder, width: 1),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: c.emeraldBorder, width: 1),
+      blur: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      radius: NexaRadius.groupAll,
+      tint: c.emeraldWash,
+      borderColor: c.emeraldBorder,
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: c.emeraldBorder, width: 1),
+            ),
+            child: Text(
+              '+',
+              style: NexaType.ui(
+                size: 19,
+                color: c.emeraldBright,
+                height: 1.0,
               ),
-              child: Text(
-                '+',
-                style: NexaType.ui(
-                  size: 19,
-                  color: c.emeraldBright,
-                  height: 1.0,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Add device',
+                  style: NexaType.ui(
+                    size: 15.5,
+                    weight: FontWeight.w500,
+                    color: c.emeraldBright,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  'Headsets, glasses and watches Nexa runs on.',
+                  style: NexaType.body(size: 12.5, color: c.ink45),
+                ),
+              ],
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Add device',
-                    style: NexaType.ui(
-                      size: 15.5,
-                      weight: FontWeight.w500,
-                      color: c.emeraldBright,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Headsets, glasses and watches Nexa runs on.',
-                    style: NexaType.body(size: 12.5, color: c.ink45),
-                  ),
-                ],
-              ),
-            ),
-            Text('›', style: NexaType.ui(size: 17, color: c.emerald)),
-          ],
-        ),
+          ),
+          Text('›', style: NexaType.ui(size: 17, color: c.emerald)),
+        ],
       ),
     );
   }
@@ -158,29 +155,46 @@ class _NoDevicesYet extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
 
-    return Column(
-      children: [
-        const SizedBox(height: 26),
-        const NexaMark(size: 128, glow: 58, glowOpacity: 0.4),
-        const SizedBox(height: 34),
-        Text(
-          'No devices yet.',
-          style: NexaType.display(size: 24, color: c.ink),
-        ),
-        const SizedBox(height: 12),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 264),
-          child: Text(
-            'Connect Nexa to the things around you, and she can be present on '
-            'any of them.',
-            textAlign: TextAlign.center,
-            style: NexaType.body(size: 14, color: c.ink45)
-                .copyWith(height: 1.6),
+    return NexaGlassSurface(
+      blur: 18,
+      radius: NexaRadius.sheetAll,
+      padding: const EdgeInsets.symmetric(vertical: 44, horizontal: 26),
+      child: Column(
+        children: [
+          // The dormant mark — the material for a surface Nexa is not
+          // present on yet, at a quiet opacity, breathing. Graphite on the
+          // near-black ground, stealth-black on the off-white one.
+          NexaMark(
+            size: 118,
+            material: c.isDark
+                ? NexaMarkMaterial.graphite
+                : NexaMarkMaterial.stealthBlack,
+            glow: 0,
+            glowOpacity: 0,
+            breathe: const Duration(seconds: 9),
+            opacity: 0.55,
           ),
-        ),
-        const SizedBox(height: 28),
-        NexaPrimaryButton(label: 'Add your first device', onTap: onAdd),
-      ],
+          const SizedBox(height: 30),
+          Text(
+            'No devices yet.',
+            textAlign: TextAlign.center,
+            style: NexaType.display(size: 24, color: c.ink),
+          ),
+          const SizedBox(height: 12),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 264),
+            child: Text(
+              'Connect Nexa to the things around you, and she can be present '
+              'on any of them.',
+              textAlign: TextAlign.center,
+              style: NexaType.body(size: 14, color: c.ink45)
+                  .copyWith(height: 1.6),
+            ),
+          ),
+          const SizedBox(height: 28),
+          NexaPrimaryButton(label: 'Add your first device', onTap: onAdd),
+        ],
+      ),
     );
   }
 }
@@ -203,23 +217,22 @@ class MyDeviceCard extends StatelessWidget {
     return NexaPressable(
       onTap: onTap,
       scale: 0.99,
-      child: Container(
+      child: DecoratedBox(
+        // A shadow beneath the glass, so the card reads as floating over the
+        // atmosphere rather than resting flush on it — the product itself
+        // (the image, drawn after the blur) stays perfectly sharp; only the
+        // ground behind the panel blurs.
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [c.cardTop, c.cardBottom],
-          ),
           borderRadius: NexaRadius.sheetAll,
-          border: Border.all(
-            color: device.status == DeviceStatus.disconnected
-                ? c.hairlineStrong
-                : c.emeraldBorder,
-            width: 1,
-          ),
+          boxShadow: c.shadow,
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
+        child: NexaGlassSurface(
+          radius: NexaRadius.sheetAll,
+          blur: 14,
+          borderColor: device.status == DeviceStatus.disconnected
+              ? c.hairlineStrong
+              : c.emeraldBorder,
+          child: Column(
           children: [
             SizedBox(
               height: 158,
@@ -259,6 +272,7 @@ class MyDeviceCard extends StatelessWidget {
               ),
             ),
           ],
+          ),
         ),
       ),
     );

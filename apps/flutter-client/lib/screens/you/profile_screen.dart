@@ -2,6 +2,8 @@ import 'package:flutter/widgets.dart';
 
 import '../../app_state.dart';
 import '../../theme/nexa_theme.dart';
+import '../../widgets/nexa_controls.dart';
+import '../../widgets/nexa_glass.dart';
 import '../../widgets/nexa_page.dart';
 
 /// You — the root of the fourth destination.
@@ -18,6 +20,7 @@ class ProfileScreen extends StatelessWidget {
     final memories = state.memoryRepository.count;
     final devices = state.deviceRepository.mine().length;
     final first = state.firstName;
+    final hasProfile = first.isNotEmpty || state.username.isNotEmpty;
     final voice = state.preferencesRepository.voices
         .firstWhere((v) => v.id == state.prefs.voiceId)
         .name;
@@ -27,18 +30,18 @@ class ProfileScreen extends StatelessWidget {
       children: [
         Row(
           children: [
-            Container(
-              width: 66,
-              height: 66,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: c.surfaceLift,
-                shape: BoxShape.circle,
-                border: Border.all(color: c.hairlineStrong, width: 1),
-              ),
-              child: Text(
-                (first.isEmpty ? 'N' : first[0]).toUpperCase(),
-                style: NexaType.ui(size: 24, color: c.ink72),
+            NexaGlassSurface(
+              radius: BorderRadius.circular(33),
+              blur: 12,
+              child: SizedBox(
+                width: 66,
+                height: 66,
+                child: Center(
+                  child: Text(
+                    (first.isEmpty ? 'N' : first[0]).toUpperCase(),
+                    style: NexaType.ui(size: 24, color: c.ink72),
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 16),
@@ -51,10 +54,57 @@ class ProfileScreen extends StatelessWidget {
                     style: NexaType.display(size: 24),
                   ),
                   const SizedBox(height: 5),
-                  Text(
-                    state.email,
-                    style: NexaType.ui(size: 13, color: c.ink40),
-                  ),
+                  if (hasProfile)
+                    Text(
+                      state.email,
+                      style: NexaType.ui(size: 13, color: c.ink40),
+                    )
+                  else
+                    // No profile saved yet — offer to set one up rather than
+                    // showing an empty name. Routes into the real onboarding
+                    // flow (first name, date of birth, username).
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: NexaPressable(
+                        onTap: () => state.go(NexaScreen.meeting),
+                        scale: 0.97,
+                        child: Container(
+                          margin: const EdgeInsets.only(top: 3),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: c.emeraldWash,
+                            borderRadius: NexaRadius.pillAll,
+                            border:
+                                Border.all(color: c.emeraldBorder, width: 1),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  'Set up your profile',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: NexaType.ui(
+                                    size: 12,
+                                    weight: FontWeight.w500,
+                                    color: c.emeraldBright,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Text(
+                                '›',
+                                style: NexaType.ui(size: 13, color: c.emerald),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -62,17 +112,11 @@ class ProfileScreen extends StatelessWidget {
         ),
 
         const SizedBox(height: 24),
-        Container(
+        NexaGlassSurface(
+          blur: 18,
+          tint: c.emeraldWash,
+          borderColor: c.emeraldBorder,
           padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [c.emeraldWash, c.card.withValues(alpha: c.isDark ? 0.4 : 0.0)],
-            ),
-            borderRadius: NexaRadius.glassAll,
-            border: Border.all(color: c.emeraldBorder, width: 1),
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -82,9 +126,14 @@ class ProfileScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
+                // Never a claimed duration — there is no real "first met"
+                // date wired to anything client-side yet (see the report:
+                // no backend endpoint exposes one), and "since today" was
+                // exactly as fabricated as a duration this could not
+                // possibly know for an account that existed before now.
                 first.isEmpty
                     ? 'Nexa is just getting to know you.'
-                    : 'Nexa has known you since today.',
+                    : 'Nexa is getting to know you, $first.',
                 style: NexaType.ui(
                   size: 19,
                   color: c.ink,
@@ -138,7 +187,7 @@ class ProfileScreen extends StatelessWidget {
           children: [
             NexaRow(
               label: 'Profile',
-              value: state.displayName,
+              value: hasProfile ? state.displayName : 'Not set up',
               onTap: () => state.go(NexaScreen.account),
             ),
             NexaRow(

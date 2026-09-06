@@ -6,6 +6,7 @@ import '../../app_state.dart';
 import '../../data/models/memory_entry.dart';
 import '../../theme/nexa_theme.dart';
 import '../../widgets/nexa_controls.dart';
+import '../../widgets/nexa_glass.dart';
 import '../../widgets/nexa_mark.dart';
 import '../../widgets/nexa_page.dart';
 
@@ -119,17 +120,11 @@ class _Overview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return Container(
+    return NexaGlassSurface(
+      blur: 18,
+      tint: c.emeraldWash,
+      borderColor: c.emeraldBorder,
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [c.emeraldWash, c.card.withValues(alpha: c.isDark ? 0.4 : 0.0)],
-        ),
-        borderRadius: NexaRadius.glassAll,
-        border: Border.all(color: c.emeraldBorder, width: 1),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -244,50 +239,39 @@ class _MemoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return NexaPressable(
+    return NexaGlassCard(
       onTap: onTap,
-      scale: 0.99,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-        decoration: BoxDecoration(
-          color: c.card,
-          borderRadius: NexaRadius.glassAll,
-          border: Border.all(
-            color: entry.important
-                ? const Color(0x2E4ADE9B)
-                : c.hairline,
-            width: 1,
+      blur: 12,
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      borderColor: entry.important ? const Color(0x2E4ADE9B) : c.glassBorder,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            entry.text,
+            style: NexaType.ui(
+              size: 15.5,
+              color: c.ink86,
+              height: 1.5,
+            ),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              entry.text,
-              style: NexaType.ui(
-                size: 15.5,
-                color: c.ink86,
-                height: 1.5,
+          const SizedBox(height: 11),
+          Row(
+            children: [
+              NexaStatusDot(
+                color: entry.important
+                    ? c.emerald
+                    : c.ink30,
+                glow: entry.important,
               ),
-            ),
-            const SizedBox(height: 11),
-            Row(
-              children: [
-                NexaStatusDot(
-                  color: entry.important
-                      ? c.emerald
-                      : c.ink30,
-                  glow: entry.important,
-                ),
-                const SizedBox(width: 9),
-                Text(
-                  '${entry.when} · ${entry.kind.label}',
-                  style: NexaType.ui(size: 11.5, color: c.ink34),
-                ),
-              ],
-            ),
-          ],
-        ),
+              const SizedBox(width: 9),
+              Text(
+                '${entry.when} · ${entry.kind.label}',
+                style: NexaType.ui(size: 11.5, color: c.ink34),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -299,16 +283,14 @@ class _NothingInFilter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return Container(
+    return NexaGlassSurface(
+      blur: 14,
       padding: const EdgeInsets.symmetric(vertical: 44, horizontal: 20),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: NexaRadius.glassAll,
-        border: Border.all(color: c.hairline, width: 1),
-      ),
-      child: Text(
-        'Nothing of this kind yet.',
-        style: NexaType.body(size: 14, color: c.ink42),
+      child: Center(
+        child: Text(
+          'Nothing of this kind yet.',
+          style: NexaType.body(size: 14, color: c.ink42),
+        ),
       ),
     );
   }
@@ -372,8 +354,7 @@ class MemoryEmptyView extends StatelessWidget {
     final c = NexaColors.of(context);
     final state = NexaScope.of(context);
 
-    return DecoratedBox(
-      decoration: BoxDecoration(color: c.void_),
+    return NexaAtmosphere(
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(32, 56, 32, 130),
@@ -382,41 +363,53 @@ class MemoryEmptyView extends StatelessWidget {
             children: [
               Text('Memory', style: NexaType.display(size: 27)),
               Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const NexaMark(
-                      size: 96,
-                      material: NexaMarkMaterial.graphite,
-                      glow: 0,
-                      breathe: Duration(seconds: 9),
-                      opacity: 0.55,
+                child: Center(
+                  child: NexaGlassSurface(
+                    blur: 20,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 40,
+                      horizontal: 30,
                     ),
-                    const SizedBox(height: 30),
-                    Text(
-                      'Nothing here yet.',
-                      textAlign: TextAlign.center,
-                      style: NexaType.display(size: 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        NexaMark(
+                          size: 96,
+                          material: c.isDark
+                              ? NexaMarkMaterial.graphite
+                              : NexaMarkMaterial.stealthBlack,
+                          glow: 0,
+                          glowOpacity: 0,
+                          breathe: const Duration(seconds: 9),
+                          opacity: 0.55,
+                        ),
+                        const SizedBox(height: 30),
+                        Text(
+                          "Nexa hasn't remembered anything yet.",
+                          textAlign: TextAlign.center,
+                          style: NexaType.display(size: 24),
+                        ),
+                        const SizedBox(height: 12),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 250),
+                          child: Text(
+                            'Nexa will remember what matters as you start '
+                            'talking.',
+                            textAlign: TextAlign.center,
+                            style: NexaType.body(
+                              size: 14.5,
+                              color: c.ink45,
+                            ).copyWith(height: 1.6),
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        NexaEmeraldButton(
+                          label: 'Talk to Nexa',
+                          onTap: () => state.goTab(NexaTab.nexa),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 250),
-                      child: Text(
-                        'Talk to Nexa and this fills itself. She keeps only '
-                        'what matters.',
-                        textAlign: TextAlign.center,
-                        style: NexaType.body(
-                          size: 14.5,
-                          color: c.ink45,
-                        ).copyWith(height: 1.6),
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    NexaEmeraldButton(
-                      label: 'Talk to Nexa',
-                      onTap: () => state.goTab(NexaTab.nexa),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],

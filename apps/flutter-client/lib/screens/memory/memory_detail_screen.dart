@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import '../../app_state.dart';
 import '../../theme/nexa_theme.dart';
 import '../../widgets/nexa_controls.dart';
+import '../../widgets/nexa_glass.dart';
 import '../../widgets/nexa_page.dart';
 
 /// One thing Nexa remembers, and what the user can do about it.
@@ -105,14 +106,9 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
                         ],
                       ),
                       const SizedBox(height: 26),
-                      Container(
+                      NexaGlassSurface(
+                        blur: 16,
                         padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-                        decoration: BoxDecoration(
-                          color: c.surfaceQuiet,
-                          borderRadius: NexaRadius.glassAll,
-                          border:
-                              Border.all(color: c.hairline, width: 1),
-                        ),
                         child: Text(
                           entry.important
                               ? 'Nexa weights this heavily. It shapes how she answers '
@@ -166,13 +162,11 @@ class _ConfirmForget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return Container(
+    return NexaGlassSurface(
+      blur: 14,
+      tint: const Color(0x1AF0A08A),
+      borderColor: const Color(0x33F0A08A),
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-      decoration: BoxDecoration(
-        color: const Color(0x0FF0A08A),
-        borderRadius: NexaRadius.glassAll,
-        border: Border.all(color: const Color(0x33F0A08A), width: 1),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
