@@ -55,6 +55,7 @@ class NexaPalette {
     required this.glassFill,
     required this.surfaceQuiet,
     required this.surfaceLift,
+    required this.group,
     required this.emeraldWash,
     required this.emeraldBorder,
     required this.illustrationInk,
@@ -170,6 +171,14 @@ class NexaPalette {
   /// One step up from [surfaceQuiet].
   final Color surfaceLift;
 
+  /// The fill of a grouped-rows card ([NexaGroup]). Deliberately its own
+  /// token, distinct from the glass wash: the design's `--group` is a nearly
+  /// solid near-white on the light ground (r 255 @ .86) and a *quieter* wash
+  /// than glass on the dark ground (white @ .045), because a settings list is
+  /// a solid card with hairlines, not a floating pane — glass is reserved for
+  /// things that actually float.
+  final Color group;
+
   /// Emerald wash behind an emerald-bordered control, and its border.
   final Color emeraldWash;
   final Color emeraldBorder;
@@ -225,6 +234,7 @@ class NexaPalette {
       glassFill: glassFill,
       surfaceQuiet: surfaceQuiet,
       surfaceLift: surfaceLift,
+      group: group,
       emeraldWash: emeraldWash,
       emeraldBorder: emerald,
       illustrationInk: illustrationInk,
@@ -279,6 +289,7 @@ class NexaPalette {
     glassFill: Color(0x0FFFFFFF),
     surfaceQuiet: Color(0x0BFFFFFF),
     surfaceLift: Color(0x14FFFFFF),
+    group: Color(0x0BFFFFFF),
     emeraldWash: Color(0x1F4ADE9B),
     emeraldBorder: Color(0x594ADE9B),
     illustrationInk: Color(0xFFDCE8E1),
@@ -292,17 +303,23 @@ class NexaPalette {
     glowScale: 1.0,
   );
 
-  /// The same system on a warm off-white ground.
+  /// The same system on a cool, atmospheric off-white ground — frosted
+  /// glass floating in soft light, not a flat white page. `void_` is the
+  /// package's own reference tone (`#F3F4F8`); every card and pill still
+  /// reads as white, just translucent enough that this ground shows through
+  /// at the edges, which is what makes them read as glass rather than paper.
   static const light = NexaPalette(
     brightness: Brightness.light,
-    void_: Color(0xFFF6F5F2),
-    base: Color(0xFFFFFFFF),
+    // The authoritative DesignSync LIGHT ground: a warm green-tinted
+    // off-white (`--void #EDF2EE`), not the cool blue-grey this used to be.
+    void_: Color(0xFFEDF2EE),
+    base: Color(0xFFF7FAF7),
     graphite: Color(0xFFFFFFFF),
     raised: Color(0xFFFFFFFF),
     card: Color(0xFFFFFFFF),
     cardTop: Color(0xFFFFFFFF),
-    cardBottom: Color(0xFFF3F2EF),
-    groundTop: Color(0xFFFFFFFF),
+    cardBottom: Color(0xFFF1F4F1),
+    groundTop: Color(0xFFFAFCFA),
     emeraldDeep: Color(0xFFD3F1E2),
     emeraldCore: Color(0xFF12805A),
     emerald: Color(0xFF12805A),
@@ -312,32 +329,35 @@ class NexaPalette {
     inkButton: Color(0xFF14181B),
     onInk: Color(0xFFF7FAF8),
     danger: Color(0xFFB0402A),
+    // Quiet ink steps step *up* on the light ground versus the dark one —
+    // the authoritative maps do this so muted metadata still reads on white.
     ink90: Color(0xE60E1211),
     ink86: Color(0xDB0E1211),
     ink82: Color(0xD10E1211),
     ink72: Color(0xB80E1211),
-    ink62: Color(0x9E0E1211),
-    ink55: Color(0x8C0E1211),
-    ink52: Color(0x850E1211),
-    ink50: Color(0x800E1211),
-    ink48: Color(0x7A0E1211),
-    ink45: Color(0x730E1211),
-    ink42: Color(0x6B0E1211),
-    ink40: Color(0x660E1211),
-    ink36: Color(0x5C0E1211),
-    ink34: Color(0x570E1211),
-    ink32: Color(0x520E1211),
-    ink30: Color(0x4D0E1211),
+    ink62: Color(0xA80E1211),
+    ink55: Color(0x940E1211),
+    ink52: Color(0x8F0E1211),
+    ink50: Color(0x8C0E1211),
+    ink48: Color(0x890E1211),
+    ink45: Color(0x850E1211),
+    ink42: Color(0x800E1211),
+    ink40: Color(0x7D0E1211),
+    ink36: Color(0x750E1211),
+    ink34: Color(0x750E1211),
+    ink32: Color(0x700E1211),
+    ink30: Color(0x6B0E1211),
     hairline: Color(0x14000000),
-    hairlineStrong: Color(0x1F000000),
-    glassBorder: Color(0x1F000000),
-    glassFill: Color(0x08000000),
-    surfaceQuiet: Color(0x07000000),
-    surfaceLift: Color(0x0D000000),
-    emeraldWash: Color(0x1412805A),
+    hairlineStrong: Color(0x1A000000),
+    glassBorder: Color(0x1A000000),
+    glassFill: Color(0x0C000000),
+    surfaceQuiet: Color(0x0B0E1211),
+    surfaceLift: Color(0x0F000000),
+    group: Color(0xDBFFFFFF),
+    emeraldWash: Color(0x1712805A),
     emeraldBorder: Color(0x4D12805A),
     illustrationInk: Color(0xFF2B322F),
-    chrome: Color(0xE6FFFFFF),
+    chrome: Color(0xDBFFFFFF),
     shadow: <BoxShadow>[
       BoxShadow(color: Color(0x14000000), blurRadius: 40, offset: Offset(0, 16)),
     ],

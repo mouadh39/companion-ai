@@ -2,22 +2,59 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import 'config/env.dart';
 import 'data/models/memory_entry.dart';
 import 'data/models/preferences.dart';
 import 'data/repositories/auth_session_repository.dart';
 import 'data/repositories/device_link_service.dart';
 import 'data/repositories/device_repository.dart';
 import 'data/repositories/memory_repository.dart';
+import 'data/models/user_profile.dart';
+import 'data/repositories/nexa_backend.dart';
+import 'data/repositories/nexa_api_client.dart';
 import 'data/repositories/pairing_session_repository.dart';
 import 'data/repositories/phone_device_repository.dart';
 import 'data/repositories/phone_device_store.dart';
 import 'data/repositories/preferences_repository.dart';
+import 'data/repositories/profile_repository.dart';
 import 'data/repositories/secure_key_value_store.dart';
 import 'data/repositories/session_store.dart';
+import 'data/repositories/supabase_auth_client.dart';
 import 'data/repositories/tqrcg_service.dart';
+
+/// Builds a real [NexaBackend] from `--dart-define=NEXA_BACKEND_URL=...`, or
+/// `null` when it is unset. See `NexaEnv.nexaBackendUrl`'s own doc.
+NexaBackend? _nexaBackendFromEnv() {
+  if (NexaEnv.nexaBackendUrl.isEmpty) return null;
+  return NexaBackend(NexaApiClient(baseUrl: Uri.parse(NexaEnv.nexaBackendUrl)));
+}
+
+/// Builds a real [SupabaseAuthConfig] from `--dart-define` values, or `null`
+/// when either is unset.
+///
+/// `null` is not an error here — it is what every build that has not been
+/// given the two `--dart-define`s (a fresh checkout, `flutter test`, CI) must
+/// keep doing, which is falling back to the unconfigured, throws-rather-than-
+/// fakes-it `AuthSessionRepository` this app already had. See
+/// `dart_define.example.json` for the two keys and where their values come
+/// from.
+SupabaseAuthConfig? _supabaseConfigFromEnv() {
+  if (NexaEnv.supabaseUrl.isEmpty || NexaEnv.supabaseAnonKey.isEmpty) {
+    return null;
+  }
+  return SupabaseAuthConfig(
+    projectUrl: Uri.parse(NexaEnv.supabaseUrl),
+    anonKey: NexaEnv.supabaseAnonKey,
+  );
+}
 
 /// Every screen in the Nexa app.
 enum NexaScreen {
+  // The launch experience — the Nexa mark arriving as a physical object,
+  // before anything else is shown. Routes into welcome/auth or straight into
+  // the authenticated destination. See `EntranceScreen`.
+  entrance('Entrance'),
+
   // Onboarding — outside the tab structure.
   welcome('Welcome'),
   signup('Sign up'),
@@ -91,7 +128,7 @@ enum NexaTab {
 }
 
 /// How the auth screen is currently asking for identity.
-enum AuthMode { providers, phone, passkey }
+enum AuthMode { providers, phone, passkey, email }
 
 /// The app's state, held in one place.
 ///
@@ -110,7 +147,20 @@ class NexaAppState extends ChangeNotifier {
     AuthSessionRepository? authSession,
     PhoneDeviceRepository? phoneDevice,
     PairingSessionRepository? pairingSession,
-  }) : deviceRepository = devices ?? LocalDeviceRepository(),
+    ProfileRepository? profile,
+    NexaBackend? backend,
+    // Test-only seam: lets a widget test land directly on `MeetingScreen`
+    // already "resuming" a specific partial profile, without first driving
+    // a real `routeAfterAuthentication` call to populate it.
+    UserProfile? resumeProfile,
+    // Test-only seam: starts on Welcome with the launch sequence already
+    // marked done, so a test driving navigation is not gated behind
+    // `EntranceScreen`'s animation. The real app leaves this false.
+    bool skipEntrance = false,
+  }) : _onboardingProfile = resumeProfile,
+       _screen = skipEntrance ? NexaScreen.welcome : NexaScreen.entrance,
+       _entranceDone = skipEntrance,
+       deviceRepository = devices ?? LocalDeviceRepository(),
        memoryRepository = memories ?? LocalMemoryRepository(),
        preferencesRepository = preferences ?? LocalPreferencesRepository(),
        tqrcgService = tqrcg ?? LocalTqrcgService(),
@@ -119,12 +169,21 @@ class NexaAppState extends ChangeNotifier {
            authSession ??
            AuthSessionRepository(
              sessionStore: SessionStore(PlatformSecureKeyValueStore()),
-             // No SupabaseAuthConfig for the default instance — no build in
-             // this repository has a real project URL or anon key to give
-             // it yet. See the report: every method that would need one
-             // throws AuthNotConfiguredException rather than pretending to
-             // work.
+             // Real once the app is run/built with SUPABASE_URL and
+             // SUPABASE_ANON_KEY via --dart-define (see
+             // dart_define.example.json); `null` otherwise, which is what
+             // keeps a build nobody has configured — a fresh checkout,
+             // `flutter test`, CI — throwing AuthNotConfiguredException
+             // rather than pretending to work, exactly as before.
+             config: _supabaseConfigFromEnv(),
            ) {
+    // Shared by every repository below that needs one — real once the app
+    // is run/built with NEXA_BACKEND_URL via --dart-define, `null`
+    // otherwise, which is what keeps an unconfigured build (a fresh
+    // checkout, `flutter test`, CI) throwing BackendNotConfiguredException
+    // rather than pretending to work, exactly as before.
+    final resolvedBackend = backend ?? _nexaBackendFromEnv();
+
     // In the constructor body, not the initializer list: PhoneDeviceRepository
     // must share this exact `this.authSession` instance (both as the token
     // source and the identity source), which is only available once the
@@ -135,10 +194,7 @@ class NexaAppState extends ChangeNotifier {
           store: PhoneDeviceStore(PlatformSecureKeyValueStore()),
           tokenProvider: this.authSession,
           identity: this.authSession,
-          // No NexaBackend for the default instance — no build in this
-          // repository has a real Nexa backend base URL configured yet.
-          // See the report: ensureRegistered throws
-          // BackendNotConfiguredException rather than pretending to work.
+          backend: resolvedBackend,
         );
     // Same reasoning, same instance-sharing requirement as phoneDevice
     // above: this needs both this.authSession (for its own bearer token)
@@ -150,8 +206,11 @@ class NexaAppState extends ChangeNotifier {
         PairingSessionRepository(
           tokenProvider: this.authSession,
           phoneDevice: this.phoneDevice,
-          // No NexaBackend here either — same reason as phoneDevice.
+          backend: resolvedBackend,
         );
+    profileRepository =
+        profile ??
+        ProfileRepository(tokenProvider: this.authSession, backend: resolvedBackend);
   }
 
   /// The data the screens read. Local implementations today; the same
@@ -179,12 +238,65 @@ class NexaAppState extends ChangeNotifier {
   /// see the report on why not.
   late final PairingSessionRepository pairingSession;
 
-  NexaScreen _screen = NexaScreen.welcome;
+  /// What onboarding has collected about the signed-in account — the real,
+  /// backend-owned answer to "has this account finished onboarding", never
+  /// a local flag. See [routeAfterAuthentication].
+  late final ProfileRepository profileRepository;
+
+  NexaScreen _screen;
   final List<NexaScreen> _history = [];
+
+  /// True once [completeEntrance] has run — so a hot restart or a second
+  /// build does not replay the launch sequence, and tests that drive a
+  /// specific screen are not gated behind it.
+  bool _entranceDone;
+  bool get entranceComplete => _entranceDone;
+
+  Future<void>? _boot;
+
+  /// Completes once [startup] has read the persisted session (not the phone
+  /// device record, which continues in the background). `EntranceScreen`
+  /// waits briefly on this so a returning account gets the short entrance
+  /// rather than the first-launch one.
+  Future<void> get bootComplete => _boot ?? Future<void>.value();
+
+  /// Restores the persisted Supabase session and this phone's device record,
+  /// once, at launch. Called by `NexaApp`. Sequenced deliberately:
+  /// `PhoneDeviceRepository.restore` reads `AuthSessionRepository.currentUserId`,
+  /// so the session must be in memory first.
+  ///
+  /// It does **not** navigate — [completeEntrance] does that when the launch
+  /// animation finishes and this future has settled, so a returning account
+  /// still gets its full (short) entrance rather than being snapped past it
+  /// the instant the token loads.
+  Future<void> startup() => _boot ??= () async {
+        await authSession.restore();
+        final email = authSession.current?.email;
+        if (email != null && email.isNotEmpty) setEmail(email);
+        // Ordered after the session (it reads `currentUserId`) but not
+        // awaited into the launch gate — a slow or unavailable secure store
+        // must not hold the entrance open, and no screen needs the phone's
+        // device record before the first frame.
+        unawaited(phoneDevice.restore());
+      }();
 
   AuthMode _authMode = AuthMode.providers;
   String _name = '';
-  int _meetStep = 0;
+
+  /// The real, saved username — set once onboarding's username step
+  /// succeeds, or once [routeAfterAuthentication] fetches a profile that
+  /// already has one. Kept apart from [_onboardingProfile], which is
+  /// cleared the moment onboarding completes: this is the copy the rest of
+  /// the app (the Account screen) reads after that point, so completing
+  /// onboarding must not also erase the one place its own result is shown.
+  String _username = '';
+
+  /// What [routeAfterAuthentication] last fetched, for [MeetingScreen] to
+  /// resume from. `null` means either nothing has been fetched this run —
+  /// true right after a brand-new sign-up, which has no profile row yet by
+  /// definition — or nobody is signed in; a screen tells the two apart by
+  /// whether it got here at all.
+  UserProfile? _onboardingProfile;
 
   String? _deviceId;
   String? _memoryId;
@@ -204,8 +316,12 @@ class NexaAppState extends ChangeNotifier {
   NexaScreen get screen => _screen;
   AuthMode get authMode => _authMode;
   String get name => _name;
+  String get username => _username;
   String get email => preferencesRepository.email;
-  int get meetStep => _meetStep;
+
+  /// What [routeAfterAuthentication] fetched for [MeetingScreen] to resume
+  /// from. See [_onboardingProfile]'s own doc.
+  UserProfile? get onboardingProfile => _onboardingProfile;
   String? get deviceId => _deviceId;
   String? get memoryId => _memoryId;
   MemoryFilter get memoryFilter => _memoryFilter;
@@ -301,14 +417,74 @@ class NexaAppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setUsername(String value) {
+    _username = value;
+    notifyListeners();
+  }
+
   void setEmail(String value) {
     preferencesRepository.email = value;
     notifyListeners();
   }
 
-  void setMeetStep(int step) {
-    _meetStep = step;
-    notifyListeners();
+  /// Decides where a session that just became live should land: the
+  /// assistant, if onboarding is done; [NexaScreen.meeting], resuming at
+  /// whichever field is still missing, if it is not; or a real error state
+  /// if the check itself could not be answered.
+  ///
+  /// Call this, and only this, whenever a session has just become live —
+  /// after a real sign-in, and after a restored session on launch. Sign-up
+  /// does not call this: a brand-new account has no profile row by
+  /// definition, so `state.goRoot(NexaScreen.meeting)` directly, with
+  /// nothing to resume, is already correct and needs no network round trip
+  /// to confirm.
+  ///
+  /// A network or server failure here is never read as "this is a new
+  /// account" — that would mean a connectivity problem silently sent an
+  /// existing, fully onboarded person through onboarding again. It routes
+  /// to [NexaScreen.error] instead, which is real and retryable, not a
+  /// guess dressed up as one.
+  Future<void> routeAfterAuthentication() async {
+    final UserProfile profile;
+    try {
+      profile = await profileRepository.fetchMine();
+    } catch (_) {
+      goRoot(NexaScreen.error);
+      return;
+    }
+
+    if (profile.firstName != null) _name = profile.firstName!;
+    if (profile.username != null) _username = profile.username!;
+
+    if (profile.completed) {
+      _onboardingProfile = null;
+      goRoot(NexaTab.nexa.root);
+    } else {
+      _onboardingProfile = profile;
+      goRoot(NexaScreen.meeting);
+    }
+  }
+
+  /// The launch sequence has finished playing. Decide where it hands off to:
+  /// an authenticated account runs the real post-auth routing
+  /// ([routeAfterAuthentication] — assistant, resumed onboarding, or a real
+  /// error state); anyone else lands on Welcome.
+  ///
+  /// Called once, by [EntranceScreen], when its animation completes. Safe to
+  /// call again — it is a no-op after the first time, and after any code that
+  /// has already navigated away from [NexaScreen.entrance].
+  Future<void> completeEntrance() async {
+    if (_entranceDone) return;
+    _entranceDone = true;
+    // The session restore may still be in flight on a slow secure-storage
+    // read — wait for it so a returning account is recognised as one.
+    await (_boot ?? Future<void>.value());
+    if (_screen != NexaScreen.entrance) return;
+    if (authSession.isSignedIn) {
+      await routeAfterAuthentication();
+    } else {
+      goRoot(NexaScreen.welcome);
+    }
   }
 
   void toggleAuth() {
@@ -319,12 +495,28 @@ class NexaAppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The same sign-in/create-account switch as [toggleAuth], but leaves
+  /// [authMode] alone.
+  ///
+  /// [toggleAuth] is the provider list's own link, and always lands back on
+  /// the provider choice. This is for the email/password sub-mode's cross
+  /// link instead — "Create account" from a sign-in should land on the
+  /// create-account *form*, not bounce through the provider list first —
+  /// so it switches [_screen] the same way and stops there.
+  void switchAuthScreen() {
+    _screen = _screen == NexaScreen.login
+        ? NexaScreen.signup
+        : NexaScreen.login;
+    notifyListeners();
+  }
+
   /// Leave the account. Local only — no session exists to end yet.
   void logOut() {
     _history.clear();
     _screen = NexaScreen.welcome;
     _name = '';
-    _meetStep = 0;
+    _username = '';
+    _onboardingProfile = null;
     _authMode = AuthMode.providers;
     notifyListeners();
     // Synchronous and first: the app must stop treating itself as having a

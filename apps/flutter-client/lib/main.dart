@@ -12,6 +12,7 @@ import 'screens/devices/pair_intro_screen.dart';
 import 'screens/devices/pair_success_screen.dart';
 import 'screens/devices/pairing_guide_screen.dart';
 import 'screens/devices/tqrcg_code_screen.dart';
+import 'screens/entrance_screen.dart';
 import 'screens/meeting_screen.dart';
 import 'screens/memory/memory_detail_screen.dart';
 import 'screens/memory/memory_screen.dart';
@@ -26,32 +27,41 @@ import 'widgets/nexa_tab_bar.dart';
 void main() => runApp(const NexaApp());
 
 class NexaApp extends StatefulWidget {
-  const NexaApp({super.key});
+  const NexaApp({super.key, this.state});
+
+  /// Overrides the app's state. `null` in the real app, which builds its own
+  /// — this exists purely so a test can inject an [NexaAppState] wired to a
+  /// fake or mocked [AuthSessionRepository] and drive the same restore-on-
+  /// launch path this widget runs for real, without a real secure-storage
+  /// platform channel or network call.
+  final NexaAppState? state;
 
   @override
   State<NexaApp> createState() => _NexaAppState();
 }
 
 class _NexaAppState extends State<NexaApp> {
-  final _state = NexaAppState();
+  late final _state = widget.state ?? NexaAppState();
 
   @override
   void initState() {
     super.initState();
-    // Nothing in the UI reads `authSession` or `phoneDevice` yet (see the
-    // report), so there is nothing to rebuild once this resolves — the
-    // call exists purely so both are in memory the moment something does
-    // need them. Sequenced, not parallel: PhoneDeviceRepository.restore
-    // reads AuthSessionRepository.currentUserId, so the session must be
-    // restored first.
-    unawaited(
-      _state.authSession.restore().then((_) => _state.phoneDevice.restore()),
-    );
+    // Restores the persisted session and this phone's device record, in that
+    // order (PhoneDeviceRepository.restore reads currentUserId). It does not
+    // navigate: `EntranceScreen` calls `completeEntrance()` when the launch
+    // animation finishes, and that is what runs `routeAfterAuthentication`
+    // for a recognised account — so a returning user still gets the short
+    // entrance instead of being snapped past it the instant the token loads.
+    unawaited(_state.startup());
   }
 
   @override
   void dispose() {
-    _state.dispose();
+    // Only disposed when this widget created it. An injected state is a
+    // test's own object, with its own teardown — disposing it a second time
+    // here would crash on the ChangeNotifier "used after being disposed"
+    // assertion the moment a test's own `addTearDown` runs.
+    if (widget.state == null) _state.dispose();
     super.dispose();
   }
 
@@ -177,6 +187,9 @@ class NexaHome extends StatelessWidget {
     final state = NexaScope.of(context);
 
     final screen = switch (state.screen) {
+      // The launch experience.
+      NexaScreen.entrance => const EntranceScreen(),
+
       // Onboarding.
       NexaScreen.welcome => const WelcomeScreen(),
       NexaScreen.signup ||
@@ -368,7 +381,11 @@ class NexaErrorScreen extends StatelessWidget {
               const SizedBox(height: 32),
               NexaPrimaryButton(
                 label: 'Try again',
-                onTap: () => state.goTab(NexaTab.nexa),
+                // Re-runs the same real check that led here — never just
+                // drops the account onto the assistant, which would be
+                // exactly the "network failure read as a fresh account"
+                // mistake this screen exists to prevent.
+                onTap: () => state.routeAfterAuthentication(),
               ),
               const SizedBox(height: 11),
               NexaQuietButton(

@@ -2,9 +2,82 @@ import 'package:flutter/widgets.dart';
 
 import '../theme/nexa_theme.dart';
 import 'nexa_controls.dart';
+import 'nexa_glass.dart';
+import 'nexa_icons.dart';
+
+/// The atmospheric ground every content screen sits on: the same radial wash
+/// the assistant and onboarding surfaces use, plus two soft, static emerald
+/// blooms placed off-centre so a settings list reads as a space with depth
+/// rather than a flat page. No animation runs here — a screen that scrolls
+/// under it should never pay for a controller it does not need; the mark's
+/// own breathing is what carries life on the screens that show it.
+class NexaAtmosphere extends StatelessWidget {
+  const NexaAtmosphere({super.key, this.child});
+
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: const Alignment(0, -0.62),
+          radius: 1.15,
+          colors: [c.groundTop, c.void_],
+          stops: const [0.0, 0.78],
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned(
+            top: -140,
+            right: -90,
+            child: _Bloom(size: 320, opacity: c.isDark ? 0.10 : 0.16),
+          ),
+          Positioned(
+            bottom: -170,
+            left: -110,
+            child: _Bloom(size: 380, opacity: c.isDark ? 0.06 : 0.10),
+          ),
+          if (child != null) child!,
+        ],
+      ),
+    );
+  }
+}
+
+class _Bloom extends StatelessWidget {
+  const _Bloom({required this.size, required this.opacity});
+
+  final double size;
+  final double opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NexaColors.of(context);
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [
+              c.emerald.withValues(alpha: opacity),
+              c.emerald.withValues(alpha: 0),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// The standard shape of a Nexa screen: a title that stays put while the body
-/// scrolls under it, on near-black, with the paddings the design specifies.
+/// scrolls under it, on the app's atmospheric ground, with the paddings the
+/// design specifies.
 ///
 /// Everything below the assistant uses this, which is what keeps twenty
 /// screens feeling like one app rather than twenty.
@@ -31,15 +104,15 @@ class NexaPage extends StatelessWidget {
 
   final List<Widget> children;
   final double bottomPadding;
+
+  /// Overrides the atmospheric ground with something else — the loading and
+  /// error scaffolds want a plain surface with nothing floating behind it.
   final Decoration? background;
 
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return DecoratedBox(
-      decoration:
-          background ?? BoxDecoration(color: c.void_),
-      child: SafeArea(
+    final body = SafeArea(
         bottom: false,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -99,8 +172,12 @@ class NexaPage extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+      );
+
+    if (background != null) {
+      return DecoratedBox(decoration: background!, child: body);
+    }
+    return NexaAtmosphere(child: body);
   }
 }
 
@@ -128,7 +205,9 @@ class NexaSectionLabel extends StatelessWidget {
   }
 }
 
-/// A group of rows in one rounded surface, hairlines between them.
+/// A group of rows on one floating pane of glass, hairlines between them —
+/// the shape every grouped-settings list in the app takes, over the
+/// atmosphere [NexaPage] now paints behind it.
 class NexaGroup extends StatelessWidget {
   const NexaGroup({super.key, required this.children});
 
@@ -137,13 +216,14 @@ class NexaGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: c.card,
-        borderRadius: NexaRadius.groupAll,
-        border: Border.all(color: c.hairline, width: 1),
-      ),
-      clipBehavior: Clip.antiAlias,
+    return NexaGlassSurface(
+      radius: NexaRadius.groupAll,
+      blur: 16,
+      // A grouped list is a solid card with hairlines, not a floating pane —
+      // the design's `--group` fill and its `--hairline-strong` edge, not the
+      // glass wash. Glass stays reserved for surfaces that actually float.
+      tint: c.group,
+      borderColor: c.hairlineStrong,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -163,11 +243,13 @@ class NexaGroup extends StatelessWidget {
   }
 }
 
-/// One row: a label, an optional value, an optional chevron.
+/// One row: an optional icon, a label, an optional value, an optional
+/// chevron.
 class NexaRow extends StatelessWidget {
   const NexaRow({
     super.key,
     required this.label,
+    this.icon,
     this.value,
     this.note,
     this.onTap,
@@ -176,6 +258,12 @@ class NexaRow extends StatelessWidget {
   });
 
   final String label;
+
+  /// The small glyph in a quiet circle to the left — see [NexaGlyph]. `null`
+  /// for a row that reads fine on its own (most confirmation/summary rows);
+  /// most settings-tree rows carry one, matching the reference design's own
+  /// icon-per-row rhythm.
+  final NexaIcon? icon;
   final String? value;
 
   /// A second line under the label, for a row that needs explaining.
@@ -194,6 +282,23 @@ class NexaRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       child: Row(
         children: [
+          if (icon != null) ...[
+            Container(
+              width: 32,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: danger ? c.danger.withValues(alpha: 0.12) : c.surfaceQuiet,
+                shape: BoxShape.circle,
+              ),
+              child: NexaGlyph(
+                icon!,
+                size: 16,
+                color: danger ? c.danger : c.ink55,
+              ),
+            ),
+            const SizedBox(width: 14),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -316,11 +421,13 @@ class NexaToggleRow extends StatelessWidget {
     super.key,
     required this.label,
     required this.value,
+    this.icon,
     this.note,
     this.onChanged,
   });
 
   final String label;
+  final NexaIcon? icon;
   final String? note;
   final bool value;
   final ValueChanged<bool>? onChanged;
@@ -329,6 +436,7 @@ class NexaToggleRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return NexaRow(
       label: label,
+      icon: icon,
       note: note,
       trailing: NexaSwitch(value: value, onChanged: onChanged),
     );
