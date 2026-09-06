@@ -297,14 +297,43 @@ class _NothingInFilter extends StatelessWidget {
 }
 
 /// The loading state. Shapes, not spinners — the page keeps its rhythm while
-/// the data arrives.
-class _MemorySkeleton extends StatelessWidget {
+/// the data arrives. The whole stack breathes on one slow opacity cycle
+/// (the reference's `nx-shimmer`), held still under reduced motion.
+class _MemorySkeleton extends StatefulWidget {
   const _MemorySkeleton();
+
+  @override
+  State<_MemorySkeleton> createState() => _MemorySkeletonState();
+}
+
+class _MemorySkeletonState extends State<_MemorySkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1500),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (NexaColors.reducedMotion(context)) {
+      _c.stop();
+      _c.value = 0;
+    } else if (!_c.isAnimating) {
+      _c.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = NexaColors.of(context);
-    return Column(
+    final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _bar(c, height: 132, radius: 20),
@@ -324,6 +353,15 @@ class _MemorySkeleton extends StatelessWidget {
           _bar(c, height: 96, radius: 20),
         ],
       ],
+    );
+
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) => Opacity(
+        opacity: 0.55 + 0.45 * (1 - _c.value),
+        child: child,
+      ),
+      child: content,
     );
   }
 
@@ -381,7 +419,7 @@ class MemoryEmptyView extends StatelessWidget {
                           glow: 0,
                           glowOpacity: 0,
                           breathe: const Duration(seconds: 9),
-                          opacity: 0.55,
+                          opacity: c.isDark ? 0.55 : 0.62,
                         ),
                         const SizedBox(height: 30),
                         Text(

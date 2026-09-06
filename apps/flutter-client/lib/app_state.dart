@@ -8,6 +8,8 @@ import 'data/models/preferences.dart';
 import 'data/repositories/auth_session_repository.dart';
 import 'data/repositories/device_link_service.dart';
 import 'data/repositories/device_repository.dart';
+import 'data/repositories/lan_discovery_socket.dart';
+import 'data/repositories/local_transport_link.dart';
 import 'data/repositories/memory_repository.dart';
 import 'data/models/user_profile.dart';
 import 'data/repositories/nexa_backend.dart';
@@ -19,6 +21,7 @@ import 'data/repositories/preferences_repository.dart';
 import 'data/repositories/profile_repository.dart';
 import 'data/repositories/secure_key_value_store.dart';
 import 'data/repositories/session_store.dart';
+import 'data/repositories/real_tqrcg_service.dart';
 import 'data/repositories/supabase_auth_client.dart';
 import 'data/repositories/tqrcg_service.dart';
 
@@ -160,8 +163,6 @@ class NexaAppState extends ChangeNotifier {
        deviceRepository = devices ?? LocalDeviceRepository(),
        memoryRepository = memories ?? LocalMemoryRepository(),
        preferencesRepository = preferences ?? LocalPreferencesRepository(),
-       tqrcgService = tqrcg ?? LocalTqrcgService(),
-       deviceLinkService = link ?? LocalDeviceLinkService(),
        authSession =
            authSession ??
            AuthSessionRepository(
@@ -208,15 +209,61 @@ class NexaAppState extends ChangeNotifier {
     profileRepository =
         profile ??
         ProfileRepository(tokenProvider: this.authSession, backend: resolvedBackend);
+
+    // Pairing transport. The production path is the *real* one: a genuine
+    // LAN discovery socket feeds `LocalTransportPairingLink` (which only
+    // ever reports `connected` on a real decoded advertisement from the
+    // headset the user asked for), and `RealTqrcgService` (which only ever
+    // reports `paired` when the backend confirms a cryptographically
+    // verified redemption — never on this phone's own say-so). Nothing here
+    // binds a socket until a pairing screen actually calls into it.
+    //
+    // The scripted `LocalTqrcgService` / `LocalDeviceLinkService` are UI
+    // stand-ins only: a test that wants to drive the pairing screens
+    // without a headset on the network injects them explicitly via `tqrcg`
+    // / `link`. A production build never gets them — an unconfigured build
+    // reaches the real services and then the real, honest failure
+    // (`BackendNotConfiguredException` on session create; a discovery
+    // timeout with "couldn't find your headset nearby"), not a fake
+    // "Connected".
+    if (tqrcg != null || link != null) {
+      tqrcgService = tqrcg ?? LocalTqrcgService();
+      deviceLinkService = link ?? LocalDeviceLinkService();
+    } else {
+      final socket = LanDiscoverySocket();
+      _lanSocket = socket;
+      deviceLinkService = LocalTransportPairingLink(
+        openMessages: () => _openLanMessages(socket),
+      );
+      tqrcgService = RealTqrcgService(
+        pairingSession: this.pairingSession,
+        lanSocket: socket,
+      );
+    }
   }
+
+  /// Opens the shared discovery socket on first listen and forwards its
+  /// message stream — the shape `LocalTransportPairingLink.openMessages`
+  /// expects (`LanDiscoverySocket.messages` throws until `open()` succeeds).
+  static Stream<LanTransportMessage> _openLanMessages(
+    LanDiscoverySocket socket,
+  ) async* {
+    await socket.open();
+    yield* socket.messages;
+  }
+
+  /// The real LAN pairing socket, when the production transport is in use;
+  /// `null` when a test injected scripted pairing services instead. Closed
+  /// in [dispose].
+  LanDiscoverySocket? _lanSocket;
 
   /// The data the screens read. Local implementations today; the same
   /// interfaces when the backend exists.
   final DeviceRepository deviceRepository;
   final MemoryRepository memoryRepository;
   final PreferencesRepository preferencesRepository;
-  final TqrcgService tqrcgService;
-  final DeviceLinkService deviceLinkService;
+  late final TqrcgService tqrcgService;
+  late final DeviceLinkService deviceLinkService;
 
   /// This phone's own Supabase session — the "authenticated session
   /// provider" between the UI and `NexaBackend`. No screen calls into this
@@ -643,6 +690,7 @@ class NexaAppState extends ChangeNotifier {
   @override
   void dispose() {
     _presenceTimer?.cancel();
+    unawaited(_lanSocket?.close());
     super.dispose();
   }
 }

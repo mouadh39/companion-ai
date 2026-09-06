@@ -26,6 +26,15 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Headset pairing discovers the headset over the local network (a UDP
+	     advertisement on LanDiscoverySocket.defaultPort). iOS 14+ prompts the
+	     user for local-network access on first use and shows this string.
+	     NOTE: UDP *broadcast* discovery additionally needs the
+	     com.apple.developer.networking.multicast entitlement, which requires
+	     an Apple approval request against the app's real bundle id and cannot
+	     be provisioned here — see docs/qa. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Nexa uses your local network to find and pair with a headset nearby.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

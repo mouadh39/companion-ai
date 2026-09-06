@@ -4,6 +4,7 @@ import '../../app_state.dart';
 import '../../theme/nexa_theme.dart';
 import '../../widgets/nexa_controls.dart';
 import '../../widgets/nexa_glass.dart';
+import '../../widgets/nexa_icons.dart';
 import '../../widgets/nexa_page.dart';
 
 /// You — the root of the fourth destination.
@@ -157,11 +158,13 @@ class ProfileScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.voice,
               label: 'Voice',
               value: voice,
               onTap: () => state.go(NexaScreen.settingsVoice),
             ),
             NexaRow(
+              icon: NexaIcon.theme,
               label: 'Appearance',
               value: state.preferencesRepository.appearances
                   .firstWhere((a) => a.id == state.prefs.appearanceId)
@@ -169,11 +172,13 @@ class ProfileScreen extends StatelessWidget {
               onTap: () => state.go(NexaScreen.settingsAppearance),
             ),
             NexaRow(
+              icon: NexaIcon.memory,
               label: 'Memory',
               value: '$memories kept',
               onTap: () => state.go(NexaScreen.settingsMemory),
             ),
             NexaRow(
+              icon: NexaIcon.devices,
               label: 'Devices',
               value: '$devices paired',
               onTap: () => state.goTab(NexaTab.devices),
@@ -186,19 +191,23 @@ class ProfileScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.profile,
               label: 'Profile',
               value: hasProfile ? state.displayName : 'Not set up',
               onTap: () => state.go(NexaScreen.account),
             ),
             NexaRow(
+              icon: NexaIcon.notifications,
               label: 'Notifications',
               onTap: () => state.go(NexaScreen.settingsNotifications),
             ),
             NexaRow(
+              icon: NexaIcon.privacy,
               label: 'Privacy',
               onTap: () => state.go(NexaScreen.privacy),
             ),
             NexaRow(
+              icon: NexaIcon.data,
               label: 'Security',
               onTap: () => state.go(NexaScreen.security),
             ),
@@ -209,10 +218,12 @@ class ProfileScreen extends StatelessWidget {
         NexaGroup(
           children: [
             NexaRow(
+              icon: NexaIcon.settings,
               label: 'Settings',
               onTap: () => state.go(NexaScreen.settings),
             ),
             NexaRow(
+              icon: NexaIcon.help,
               label: 'About Nexa',
               onTap: () => state.go(NexaScreen.about),
             ),

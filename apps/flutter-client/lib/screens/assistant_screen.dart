@@ -4,6 +4,7 @@ import '../app_state.dart';
 import '../theme/nexa_theme.dart';
 import '../widgets/nexa_controls.dart';
 import '../widgets/nexa_glass.dart';
+import '../widgets/nexa_icons.dart';
 import '../widgets/nexa_mark.dart';
 import '../widgets/nexa_page.dart';
 
@@ -127,7 +128,7 @@ class AssistantScreen extends StatelessWidget {
                         ),
                       ),
                       _RoundIconButton(
-                        glyph: '⋯',
+                        icon: NexaIcon.profile,
                         onTap: () => state.goTab(NexaTab.you),
                       ),
                     ],
@@ -305,11 +306,11 @@ class _MicButton extends StatelessWidget {
   }
 }
 
-/// The small circular glyph button in a screen header.
+/// The small circular outline-glyph button in a screen header.
 class _RoundIconButton extends StatelessWidget {
-  const _RoundIconButton({required this.glyph, this.onTap});
+  const _RoundIconButton({required this.icon, this.onTap});
 
-  final String glyph;
+  final NexaIcon icon;
   final VoidCallback? onTap;
 
   @override
@@ -330,10 +331,7 @@ class _RoundIconButton extends StatelessWidget {
               width: 38,
               height: 38,
               child: Center(
-                child: Text(
-                  glyph,
-                  style: NexaType.ui(size: 15, color: c.ink55),
-                ),
+                child: NexaGlyph(icon, size: 17, color: c.ink55),
               ),
             ),
           ),

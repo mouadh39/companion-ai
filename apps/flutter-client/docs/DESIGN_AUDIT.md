@@ -13,6 +13,13 @@ Compared against `apps/flutter-client` working tree on branch
 `chore/phase-1.5-and-monorepo-foundation` (which already carries ~1,900 lines of
 in-flight UI work).
 
+> **Finalization pass — 2026-09-06 pm.** The minor visual deltas this audit lists as
+> "next pass" are now resolved except the wordmark PNG (external blocker — the binary
+> would not transfer intact through the tools available here). Pairing composition was
+> switched from the scripted `Local*` defaults to the real LAN transport +
+> backend-authoritative `RealTqrcgService`. See `docs/qa/VISUAL_QA_2026-09-06.md` for the
+> per-delta status and §2 below for the pairing change.
+
 **Headline finding.** The Flutter client is already a high-fidelity implementation of
 this exact design language — it was built from an earlier ("Stage 1") cut of the same
 system. The authoritative `.dc.html` is a *representative pass* covering five core
@@ -193,10 +200,20 @@ handling"). State of the real system:
 
 **Gaps (documented, not bugs to fix tonight):**
 - No Bluetooth transport yet — LAN discovery only (`DeviceLinkService` doc says so).
-- `LocalTqrcgService` / `LocalDeviceLinkService` are still the default wiring in
-  `NexaAppState` (real variants exist but aren't composed by default). Switching the
-  default to the real services requires a running backend (see §3) — **blocked on the
-  backend JWT secret**, not on code.
+- ~~`LocalTqrcgService` / `LocalDeviceLinkService` are still the default wiring~~ —
+  **FIXED in the finalization pass (2026-09-06 pm).** `NexaAppState` now composes the
+  real transport by default: a `LanDiscoverySocket` feeding `LocalTransportPairingLink`
+  (reports `connected` only on a real decoded advertisement from the requested headset)
+  and `RealTqrcgService` (reports `paired` only when the backend confirms a verified
+  redemption). The scripted `Local*` services are **injection-only** now — a test that
+  drives the pairing screens without a headset passes `tqrcg:` / `link:` explicitly
+  (`navigation_test.dart` does). An unconfigured production build reaches the real
+  services and then the real honest failures — `BackendNotConfiguredException` on
+  session-create, or a 30 s discovery timeout ("Couldn't find your headset nearby") —
+  never a fake "Connected". iOS `NSLocalNetworkUsageDescription` added; the UDP-broadcast
+  multicast entitlement still needs an Apple approval against the real bundle id and a
+  device to verify on. Web build keeps `dart:io` (Flutter web tolerates the import;
+  `RawDatagramSocket` throws at runtime — web is not a pairing target).
 - The pairing UI (`connect`/`pairIntro`/`pairing`/`pairingCode`/`success`) has no
   authoritative `.dc.html` reference — it's from the earlier system. Screenshots 25–35
   exist. Leave as-is pending a design reference for it.

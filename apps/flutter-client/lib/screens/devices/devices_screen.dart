@@ -172,7 +172,9 @@ class _NoDevicesYet extends StatelessWidget {
             glow: 0,
             glowOpacity: 0,
             breathe: const Duration(seconds: 9),
-            opacity: 0.55,
+            // Stealth-black on the off-white ground needs a touch more
+            // presence than graphite does on the near-black one.
+            opacity: c.isDark ? 0.55 : 0.62,
           ),
           const SizedBox(height: 30),
           Text(

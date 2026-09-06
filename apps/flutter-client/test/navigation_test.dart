@@ -3,9 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nexa_client/app_state.dart';
 import 'package:nexa_client/data/models/device.dart';
 import 'package:nexa_client/data/models/memory_entry.dart';
+import 'package:nexa_client/data/repositories/device_link_service.dart';
 import 'package:nexa_client/data/repositories/device_repository.dart';
 import 'package:nexa_client/data/repositories/memory_repository.dart';
-import 'package:nexa_client/data/repositories/pairing.dart';
+import 'package:nexa_client/data/repositories/tqrcg_service.dart';
 import 'package:nexa_client/main.dart';
 import 'package:nexa_client/widgets/nexa_controls.dart';
 import 'package:nexa_client/theme/nexa_theme.dart';
@@ -26,7 +27,16 @@ Future<NexaAppState> _pump(
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.reset);
 
-  final state = NexaAppState(devices: devices, memories: memories);
+  // The scripted pairing doubles: these tests walk the pairing *screens*
+  // without a headset on the network, so they inject the UI stand-ins.
+  // Production composes the real LAN transport + backend-authoritative
+  // `RealTqrcgService` instead (see `NexaAppState`).
+  final state = NexaAppState(
+    devices: devices,
+    memories: memories,
+    tqrcg: LocalTqrcgService(),
+    link: LocalDeviceLinkService(),
+  );
   addTearDown(state.dispose);
   if (at != null) state.go(at);
 
