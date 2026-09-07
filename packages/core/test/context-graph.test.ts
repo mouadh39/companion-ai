@@ -24,6 +24,7 @@ import type { CompanionId, TurnId, UserId } from '@nexa/shared';
 const turnId = trustExternalId<TurnId>('00000000-0000-7000-8000-0000000000bb');
 
 const request: ContributionRequest = {
+  clientCapabilities: null,
   turnId,
   companionId: trustExternalId<CompanionId>('companion-1'),
   userId: trustExternalId<UserId>('user-1'),

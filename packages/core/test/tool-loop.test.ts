@@ -121,12 +121,25 @@ const context: CognitiveContext = {
   retrievedMemories: [],
   goals: [],
   availableTools: [tool],
+  clientCapabilities: null,
   emotion: null,
   relationship: null,
   world: null,
+  body: null,
+  self: null,
   plan: null,
   hint: null,
   budget: { totalLimit: 12_000, sectionLimits: {}, spent: {}, omissions: [] },
+};
+
+/** A client that has declared it can execute `move` — the embodiment signal. */
+const embodiedContext: CognitiveContext = {
+  ...context,
+  clientCapabilities: {
+    actions: ['speak', 'move', 'follow', 'stop', 'look', 'gesture'],
+    streaming: false,
+    locale: null,
+  },
 };
 
 const request = (over: Partial<ToolLoopRequest> = {}): ToolLoopRequest => ({
@@ -439,5 +452,243 @@ describe('runToolLoop', () => {
     );
 
     expect(outcome.failure).not.toBeNull();
+  });
+
+  // ── the action block ───────────────────────────────────────────────────
+  // Body actions ride a fenced `nexa` block in the model's own completion text
+  // — see `readActionBlock` in generation/action-block.ts. Recognised only for
+  // a client that declared the action; everyone else sees exactly the text the
+  // model produced.
+
+  /** Wraps actions in the fence the model is instructed to use. */
+  const block = (json: string): string => ['```nexa', json, '```'].join('\n');
+
+  it('turns a block into actions alongside the spoken reply', async () => {
+    const model = scriptedModel([
+      completion({
+        text: `Coming over!\n\n${block('{"actions":[{"type":"move","target":"user"}]}')}`,
+      }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    expect(outcome.failure).toBeNull();
+    expect(outcome.actions).toHaveLength(2);
+    expect(outcome.actions[0]).toMatchObject({ type: 'move', target: 'user' });
+    expect(outcome.actions[1]).toMatchObject({ type: 'speak', text: 'Coming over!' });
+  });
+
+  it('carries a direction, a distance and its unit', async () => {
+    const model = scriptedModel([
+      completion({
+        text: `Alright.\n\n${block(
+          '{"actions":[{"type":"move","direction":"backward","distance":2,"distanceUnit":"steps"}]}',
+        )}`,
+      }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    expect(outcome.actions[0]).toMatchObject({
+      type: 'move',
+      target: null,
+      direction: 'backward',
+      distance: 2,
+      distanceUnit: 'steps',
+    });
+  });
+
+  it('accepts a named destination the backend cannot enumerate', async () => {
+    const model = scriptedModel([
+      completion({
+        text: `On my way.\n\n${block('{"actions":[{"type":"move","target":"table"}]}')}`,
+      }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    // Which names resolve is a fact about the client's room, not about the
+    // companion. An unknown one comes back as a `skipped` outcome naming the
+    // target rather than being refused here.
+    expect(outcome.actions[0]).toMatchObject({ type: 'move', target: 'table' });
+  });
+
+  it('reads follow and stop', async () => {
+    const model = scriptedModel([
+      completion({
+        text: `Sure.\n\n${block(
+          '{"actions":[{"type":"follow","target":"user"},{"type":"stop","scope":"follow"}]}',
+        )}`,
+      }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    expect(outcome.actions[0]).toMatchObject({ type: 'follow', target: 'user', mode: 'walk' });
+    expect(outcome.actions[1]).toMatchObject({ type: 'stop', scope: 'follow' });
+  });
+
+  it('reads gesture and look, which no channel could previously express', async () => {
+    const model = scriptedModel([
+      completion({
+        text: `Hi!\n\n${block(
+          '{"actions":[{"type":"gesture","gesture":"wave"},{"type":"look","target":"user"}]}',
+        )}`,
+      }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    expect(outcome.actions[0]).toMatchObject({ type: 'gesture', gesture: 'wave' });
+    expect(outcome.actions[1]).toMatchObject({ type: 'look', target: 'user' });
+  });
+
+  it('ignores the block for a client that never declared it can move', async () => {
+    const text = `Coming over!\n\n${block('{"actions":[{"type":"move","target":"user"}]}')}`;
+    const model = scriptedModel([completion({ text })]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request(), // default context has clientCapabilities: null
+      options(),
+    );
+
+    expect(outcome.actions).toHaveLength(1);
+    expect(outcome.actions[0]).toMatchObject({ type: 'speak' });
+    expect(outcome.actions[0]).not.toMatchObject({ type: 'move' });
+  });
+
+  it('keeps the answer when the block is malformed, and says so', async () => {
+    const model = scriptedModel([
+      completion({ text: `Coming over!\n\n${block('{"actions":[{"type":"move"')}` }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    // The prose is a real answer and survives; only the actions are lost. A
+    // failed turn would trade a companion that answered but did not move for
+    // one that did neither.
+    expect(outcome.failure).toBeNull();
+    expect(outcome.actions).toHaveLength(1);
+    expect(outcome.actions[0]).toMatchObject({ type: 'speak', text: 'Coming over!' });
+    expect(outcome.diagnostics.map((d) => d.code)).toContain('action_block_malformed');
+  });
+
+  it('drops a move that names neither a target nor a direction', async () => {
+    const model = scriptedModel([
+      completion({ text: `Okay.\n\n${block('{"actions":[{"type":"move"}]}')}` }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    expect(outcome.actions).toHaveLength(1);
+    expect(outcome.actions[0]).toMatchObject({ type: 'speak' });
+    expect(outcome.diagnostics.map((d) => d.code)).toContain('action_block_malformed');
+  });
+
+  it('refuses to mint remember or call_tool through the block', async () => {
+    const model = scriptedModel([
+      completion({
+        text: `Sure.\n\n${block('{"actions":[{"type":"remember","content":"secret"}]}')}`,
+      }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({
+        context: {
+          ...embodiedContext,
+          clientCapabilities: {
+            actions: ['speak', 'move', 'remember'],
+            streaming: false,
+            locale: null,
+          },
+        },
+      }),
+      options(),
+    );
+
+    // Memory is the backend's own, and a second unaudited way to write it is
+    // exactly what this channel must not become.
+    expect(outcome.actions.every((action) => action.type !== 'remember')).toBe(true);
+  });
+
+  it('answers with actions alone when the model only acted', async () => {
+    const model = scriptedModel([
+      completion({ text: block('{"actions":[{"type":"stop","scope":"all"}]}') }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    // A silent stop is a legitimate answer to "stop", and failing the turn
+    // would throw away an action the body is entitled to perform.
+    expect(outcome.failure).toBeNull();
+    expect(outcome.actions).toHaveLength(1);
+    expect(outcome.actions[0]).toMatchObject({ type: 'stop' });
+  });
+
+  it('leaves an ordinary code block alone', async () => {
+    const text = 'Here you go:\n\n```json\n{"actions":[{"type":"move","target":"user"}]}\n```';
+    const model = scriptedModel([completion({ text })]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    // The fence is tagged `nexa`, not bare, precisely so a companion asked
+    // about JSON does not walk across the room.
+    expect(outcome.actions).toHaveLength(1);
+    expect(outcome.actions[0]).toMatchObject({ type: 'speak', text });
+  });
+
+  it('carries the same decisionId onto every action it produced', async () => {
+    const model = scriptedModel([
+      completion({
+        text: `On my way.\n\n${block('{"actions":[{"type":"move","target":"user"}]}')}`,
+      }),
+    ]);
+
+    const outcome = await runToolLoop(
+      { model, limits: defaultToolLoopLimits },
+      request({ context: embodiedContext }),
+      options(),
+    );
+
+    expect(outcome.actions).toHaveLength(2);
+    for (const action of outcome.actions) expect(action.decisionId).toBe(decision.id);
   });
 });

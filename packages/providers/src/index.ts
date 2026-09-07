@@ -8,4 +8,12 @@
 export type { AnthropicProviderOptions } from './anthropic.js';
 export { AnthropicLanguageModel } from './anthropic.js';
 
+export type { GroqProviderOptions, FetchLike } from './groq.js';
+export { GroqLanguageModel } from './groq.js';
+
 export { ScriptedLanguageModel, HeuristicTokenEstimator } from './scripted.js';
+
+export type { OpenAiEmbeddingOptions } from './openai-embeddings.js';
+export { OpenAiEmbeddingProvider } from './openai-embeddings.js';
+
+export { ScriptedEmbeddingProvider } from './scripted-embeddings.js';

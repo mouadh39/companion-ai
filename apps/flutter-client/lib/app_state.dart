@@ -1,0 +1,712 @@
+import 'dart:async';
+
+import 'package:flutter/widgets.dart';
+
+import 'config/env.dart';
+import 'data/models/memory_entry.dart';
+import 'data/models/preferences.dart';
+import 'data/repositories/auth_session_repository.dart';
+import 'data/repositories/device_link_service.dart';
+import 'data/repositories/device_repository.dart';
+import 'data/repositories/lan_discovery_socket.dart';
+import 'data/repositories/local_transport_link.dart';
+import 'data/repositories/memory_repository.dart';
+import 'data/models/user_profile.dart';
+import 'data/repositories/nexa_backend.dart';
+import 'data/repositories/nexa_api_client.dart';
+import 'data/repositories/pairing_session_repository.dart';
+import 'data/repositories/phone_device_repository.dart';
+import 'data/repositories/phone_device_store.dart';
+import 'data/repositories/preferences_repository.dart';
+import 'data/repositories/profile_repository.dart';
+import 'data/repositories/secure_key_value_store.dart';
+import 'data/repositories/session_store.dart';
+import 'data/repositories/real_tqrcg_service.dart';
+import 'data/repositories/supabase_auth_client.dart';
+import 'data/repositories/tqrcg_service.dart';
+
+/// Builds a real [NexaBackend] from `--dart-define=NEXA_BACKEND_URL=...`, or
+/// `null` when it is unset. See `NexaEnv.nexaBackendUrl`'s own doc.
+NexaBackend? _nexaBackendFromEnv() {
+  if (NexaEnv.nexaBackendUrl.isEmpty) return null;
+  return NexaBackend(NexaApiClient(baseUrl: Uri.parse(NexaEnv.nexaBackendUrl)));
+}
+
+/// Builds a real [SupabaseAuthConfig] from `--dart-define` values, or `null`
+/// when either is unset.
+///
+/// `null` is not an error here — it is what every build that has not been
+/// given the two `--dart-define`s (a fresh checkout, `flutter test`, CI) must
+/// keep doing, which is falling back to the unconfigured, throws-rather-than-
+/// fakes-it `AuthSessionRepository` this app already had. See
+/// `dart_define.example.json` for the two keys and where their values come
+/// from.
+SupabaseAuthConfig? _supabaseConfigFromEnv() {
+  if (NexaEnv.supabaseUrl.isEmpty || NexaEnv.supabaseAnonKey.isEmpty) {
+    return null;
+  }
+  return SupabaseAuthConfig(
+    projectUrl: Uri.parse(NexaEnv.supabaseUrl),
+    anonKey: NexaEnv.supabaseAnonKey,
+  );
+}
+
+/// Every screen in the Nexa app.
+enum NexaScreen {
+  // The launch experience — the Nexa mark arriving as a physical object,
+  // before anything else is shown. Routes into welcome/auth or straight into
+  // the authenticated destination. See `EntranceScreen`.
+  entrance('Entrance'),
+
+  // Onboarding — outside the tab structure.
+  welcome('Welcome'),
+  signup('Sign up'),
+  login('Log in'),
+  forgot('Forgot password'),
+  meeting('First meeting'),
+
+  // Nexa.
+  assistant('Assistant', tab: NexaTab.nexa),
+  listening('Listening', tab: NexaTab.nexa),
+  speaking('Speaking', tab: NexaTab.nexa),
+
+  // Memory.
+  memory('Memory', tab: NexaTab.memory),
+  memoryDetail('Memory detail', tab: NexaTab.memory),
+  memoryEmpty('Memory empty', tab: NexaTab.memory),
+
+  // Devices.
+  devices('Devices', tab: NexaTab.devices),
+  deviceDetail('Device', tab: NexaTab.devices),
+  connect('Pair a device', tab: NexaTab.devices),
+  pairIntro('Pair device', tab: NexaTab.devices),
+  pairing('Pairing guide'),
+  pairingCode('Pairing code'),
+  success('Pairing complete'),
+
+  // You.
+  profile('Profile', tab: NexaTab.you),
+  settings('Settings', tab: NexaTab.you),
+  account('Account', tab: NexaTab.you),
+  settingsNexa('Nexa', tab: NexaTab.you),
+  settingsVoice('Voice', tab: NexaTab.you),
+  settingsAppearance('Appearance', tab: NexaTab.you),
+  settingsNotifications('Notifications', tab: NexaTab.you),
+  settingsMemory('Memory controls', tab: NexaTab.you),
+  privacy('Privacy', tab: NexaTab.you),
+  security('Security', tab: NexaTab.you),
+  about('About', tab: NexaTab.you),
+
+  // Conditions.
+  error('Something went wrong');
+
+  const NexaScreen(this.label, {this.tab});
+
+  final String label;
+
+  /// Which primary destination owns this screen, if any.
+  final NexaTab? tab;
+}
+
+/// The four primary destinations.
+enum NexaTab {
+  nexa('Nexa'),
+  memory('Memory'),
+  devices('Devices'),
+  you('You');
+
+  const NexaTab(this.label);
+
+  final String label;
+
+  /// The screen a tab lands on. A getter rather than a field because
+  /// NexaScreen already names its tab, and two const enums cannot point at
+  /// each other.
+  NexaScreen get root => switch (this) {
+    NexaTab.nexa => NexaScreen.assistant,
+    NexaTab.memory => NexaScreen.memory,
+    NexaTab.devices => NexaScreen.devices,
+    NexaTab.you => NexaScreen.profile,
+  };
+}
+
+/// The app's state, held in one place.
+///
+/// The design drives every screen from a single state object rather than a
+/// navigation stack of routes — presence, auth mode and onboarding step are
+/// fields, and the screen is chosen from them. This keeps that shape and adds
+/// only what nesting needs: a history to go back through, and which device or
+/// memory is being looked at.
+class NexaAppState extends ChangeNotifier {
+  NexaAppState({
+    DeviceRepository? devices,
+    MemoryRepository? memories,
+    PreferencesRepository? preferences,
+    TqrcgService? tqrcg,
+    DeviceLinkService? link,
+    AuthSessionRepository? authSession,
+    PhoneDeviceRepository? phoneDevice,
+    PairingSessionRepository? pairingSession,
+    ProfileRepository? profile,
+    NexaBackend? backend,
+    // Test-only seam: lets a widget test land directly on `MeetingScreen`
+    // already "resuming" a specific partial profile, without first driving
+    // a real `routeAfterAuthentication` call to populate it.
+    UserProfile? resumeProfile,
+    // Test-only seam: starts on Welcome with the launch sequence already
+    // marked done, so a test driving navigation is not gated behind
+    // `EntranceScreen`'s animation. The real app leaves this false.
+    bool skipEntrance = false,
+  }) : _onboardingProfile = resumeProfile,
+       _screen = skipEntrance ? NexaScreen.welcome : NexaScreen.entrance,
+       _entranceDone = skipEntrance,
+       deviceRepository = devices ?? LocalDeviceRepository(),
+       memoryRepository = memories ?? LocalMemoryRepository(),
+       preferencesRepository = preferences ?? LocalPreferencesRepository(),
+       authSession =
+           authSession ??
+           AuthSessionRepository(
+             sessionStore: SessionStore(PlatformSecureKeyValueStore()),
+             // Real once the app is run/built with SUPABASE_URL and
+             // SUPABASE_ANON_KEY via --dart-define (see
+             // dart_define.example.json); `null` otherwise, which is what
+             // keeps a build nobody has configured — a fresh checkout,
+             // `flutter test`, CI — throwing AuthNotConfiguredException
+             // rather than pretending to work, exactly as before.
+             config: _supabaseConfigFromEnv(),
+           ) {
+    // Shared by every repository below that needs one — real once the app
+    // is run/built with NEXA_BACKEND_URL via --dart-define, `null`
+    // otherwise, which is what keeps an unconfigured build (a fresh
+    // checkout, `flutter test`, CI) throwing BackendNotConfiguredException
+    // rather than pretending to work, exactly as before.
+    final resolvedBackend = backend ?? _nexaBackendFromEnv();
+
+    // In the constructor body, not the initializer list: PhoneDeviceRepository
+    // must share this exact `this.authSession` instance (both as the token
+    // source and the identity source), which is only available once the
+    // initializer list above has finished resolving it.
+    this.phoneDevice =
+        phoneDevice ??
+        PhoneDeviceRepository(
+          store: PhoneDeviceStore(PlatformSecureKeyValueStore()),
+          tokenProvider: this.authSession,
+          identity: this.authSession,
+          backend: resolvedBackend,
+        );
+    // Same reasoning, same instance-sharing requirement as phoneDevice
+    // above: this needs both this.authSession (for its own bearer token)
+    // and this.phoneDevice (to resolve phoneDeviceId), both only available
+    // once the initializer list and the phoneDevice assignment above have
+    // run.
+    this.pairingSession =
+        pairingSession ??
+        PairingSessionRepository(
+          tokenProvider: this.authSession,
+          phoneDevice: this.phoneDevice,
+          backend: resolvedBackend,
+        );
+    profileRepository =
+        profile ??
+        ProfileRepository(tokenProvider: this.authSession, backend: resolvedBackend);
+
+    // Pairing transport. The production path is the *real* one: a genuine
+    // LAN discovery socket feeds `LocalTransportPairingLink` (which only
+    // ever reports `connected` on a real decoded advertisement from the
+    // headset the user asked for), and `RealTqrcgService` (which only ever
+    // reports `paired` when the backend confirms a cryptographically
+    // verified redemption — never on this phone's own say-so). Nothing here
+    // binds a socket until a pairing screen actually calls into it.
+    //
+    // The scripted `LocalTqrcgService` / `LocalDeviceLinkService` are UI
+    // stand-ins only: a test that wants to drive the pairing screens
+    // without a headset on the network injects them explicitly via `tqrcg`
+    // / `link`. A production build never gets them — an unconfigured build
+    // reaches the real services and then the real, honest failure
+    // (`BackendNotConfiguredException` on session create; a discovery
+    // timeout with "couldn't find your headset nearby"), not a fake
+    // "Connected".
+    if (tqrcg != null || link != null) {
+      tqrcgService = tqrcg ?? LocalTqrcgService();
+      deviceLinkService = link ?? LocalDeviceLinkService();
+    } else {
+      final socket = LanDiscoverySocket();
+      _lanSocket = socket;
+      deviceLinkService = LocalTransportPairingLink(
+        openMessages: () => _openLanMessages(socket),
+      );
+      tqrcgService = RealTqrcgService(
+        pairingSession: this.pairingSession,
+        lanSocket: socket,
+      );
+    }
+  }
+
+  /// Opens the shared discovery socket on first listen and forwards its
+  /// message stream — the shape `LocalTransportPairingLink.openMessages`
+  /// expects (`LanDiscoverySocket.messages` throws until `open()` succeeds).
+  static Stream<LanTransportMessage> _openLanMessages(
+    LanDiscoverySocket socket,
+  ) async* {
+    await socket.open();
+    yield* socket.messages;
+  }
+
+  /// The real LAN pairing socket, when the production transport is in use;
+  /// `null` when a test injected scripted pairing services instead. Closed
+  /// in [dispose].
+  LanDiscoverySocket? _lanSocket;
+
+  /// The data the screens read. Local implementations today; the same
+  /// interfaces when the backend exists.
+  final DeviceRepository deviceRepository;
+  final MemoryRepository memoryRepository;
+  final PreferencesRepository preferencesRepository;
+  late final TqrcgService tqrcgService;
+  late final DeviceLinkService deviceLinkService;
+
+  /// This phone's own Supabase session — the "authenticated session
+  /// provider" between the UI and `NexaBackend`. No screen calls into this
+  /// yet (see the report on why not); it is wired here so the boundary
+  /// exists at the one point in the app's architecture it belongs, ready
+  /// for a screen to use once there is a real sign-in flow behind it.
+  final AuthSessionRepository authSession;
+
+  /// This phone's own device row on the backend — registered once per
+  /// account, remembered across restarts. Also not called from any screen
+  /// yet; see the report.
+  late final PhoneDeviceRepository phoneDevice;
+
+  /// Turns a headset's enrolment handle into a pairing session this phone
+  /// can display. Not called from any screen or from `TqrcgService` yet —
+  /// see the report on why not.
+  late final PairingSessionRepository pairingSession;
+
+  /// What onboarding has collected about the signed-in account — the real,
+  /// backend-owned answer to "has this account finished onboarding", never
+  /// a local flag. See [routeAfterAuthentication].
+  late final ProfileRepository profileRepository;
+
+  NexaScreen _screen;
+  final List<NexaScreen> _history = [];
+
+  /// True once [completeEntrance] has run — so a hot restart or a second
+  /// build does not replay the launch sequence, and tests that drive a
+  /// specific screen are not gated behind it.
+  bool _entranceDone;
+  bool get entranceComplete => _entranceDone;
+
+  Future<void>? _boot;
+
+  /// Completes once [startup] has read the persisted session (not the phone
+  /// device record, which continues in the background). `EntranceScreen`
+  /// waits briefly on this so a returning account gets the short entrance
+  /// rather than the first-launch one.
+  Future<void> get bootComplete => _boot ?? Future<void>.value();
+
+  /// Restores the persisted Supabase session and this phone's device record,
+  /// once, at launch. Called by `NexaApp`. Sequenced deliberately:
+  /// `PhoneDeviceRepository.restore` reads `AuthSessionRepository.currentUserId`,
+  /// so the session must be in memory first.
+  ///
+  /// It does **not** navigate — [completeEntrance] does that when the launch
+  /// animation finishes and this future has settled, so a returning account
+  /// still gets its full (short) entrance rather than being snapped past it
+  /// the instant the token loads.
+  Future<void> startup() => _boot ??= () async {
+        await authSession.restore();
+        final email = authSession.current?.email;
+        if (email != null && email.isNotEmpty) setEmail(email);
+        // Ordered after the session (it reads `currentUserId`) but not
+        // awaited into the launch gate — a slow or unavailable secure store
+        // must not hold the entrance open, and no screen needs the phone's
+        // device record before the first frame.
+        unawaited(phoneDevice.restore());
+      }();
+
+  String _name = '';
+
+  /// The real, saved username — set once onboarding's username step
+  /// succeeds, or once [routeAfterAuthentication] fetches a profile that
+  /// already has one. Kept apart from [_onboardingProfile], which is
+  /// cleared the moment onboarding completes: this is the copy the rest of
+  /// the app (the Account screen) reads after that point, so completing
+  /// onboarding must not also erase the one place its own result is shown.
+  String _username = '';
+
+  /// What [routeAfterAuthentication] last fetched, for [MeetingScreen] to
+  /// resume from. `null` means either nothing has been fetched this run —
+  /// true right after a brand-new sign-up, which has no profile row yet by
+  /// definition — or nobody is signed in; a screen tells the two apart by
+  /// whether it got here at all.
+  UserProfile? _onboardingProfile;
+
+  String? _deviceId;
+  String? _memoryId;
+  MemoryFilter _memoryFilter = MemoryFilter.recent;
+  int _pairStep = 0;
+  PairingPhase _pairingPhase = PairingPhase.idle;
+
+  /// What discovery learned about the headset this attempt is pairing with
+  /// — `null` until [DeviceLinkService] actually connects to one, and
+  /// cleared alongside [_pairingPhase] whenever a fresh attempt starts or
+  /// the current one fails. See [HeadsetPairingContext]'s own doc on why one
+  /// field is enough: this app pairs one device at a time.
+  HeadsetPairingContext? _pairingContext;
+
+  Timer? _presenceTimer;
+
+  NexaScreen get screen => _screen;
+  String get name => _name;
+  String get username => _username;
+  String get email => preferencesRepository.email;
+
+  /// What [routeAfterAuthentication] fetched for [MeetingScreen] to resume
+  /// from. See [_onboardingProfile]'s own doc.
+  UserProfile? get onboardingProfile => _onboardingProfile;
+  String? get deviceId => _deviceId;
+  String? get memoryId => _memoryId;
+  MemoryFilter get memoryFilter => _memoryFilter;
+  int get pairStep => _pairStep;
+
+  /// How far the pairing has got, across discovery, connection and the code.
+  PairingPhase get pairingPhase => _pairingPhase;
+
+  /// What discovery learned about the headset this attempt is pairing
+  /// with — `null` until a headset has actually been found. See
+  /// [HeadsetPairingContext]'s own doc.
+  HeadsetPairingContext? get pairingContext => _pairingContext;
+  NexaPreferences get prefs => preferencesRepository.current;
+
+  /// The first word of the name, which is all the design ever shows.
+  String get firstName => _name.trim().split(' ').first;
+
+  String get displayName => firstName.isEmpty ? 'Your account' : firstName;
+
+  bool isOn(List<NexaScreen> screens) => screens.contains(_screen);
+
+  /// Nexa is present — the assistant screen and its two live states.
+  bool get isPresence => isOn([
+    NexaScreen.assistant,
+    NexaScreen.listening,
+    NexaScreen.speaking,
+  ]);
+
+  /// Onboarding and the pairing flow own the whole screen.
+  bool get tabsVisible =>
+      _screen.tab != null &&
+      !isOn([NexaScreen.pairing, NexaScreen.pairingCode, NexaScreen.success]);
+
+  /// Which tab should read as active.
+  NexaTab? get activeTab => _screen.tab;
+
+  bool get canGoBack => _history.isNotEmpty;
+
+  // ------------------------------------------------------------------
+  // Navigation
+  // ------------------------------------------------------------------
+
+  /// Move to [screen], remembering where we came from.
+  void go(NexaScreen screen) {
+    _presenceTimer?.cancel();
+    if (screen != _screen) _history.add(_screen);
+    _screen = screen;
+    notifyListeners();
+  }
+
+  /// Move to a primary destination, clearing the history — a tab is a fresh
+  /// start, not another step deeper.
+  void goTab(NexaTab tab) {
+    _presenceTimer?.cancel();
+    _history.clear();
+    _screen = tab.root;
+    _deviceId = null;
+    _memoryId = null;
+    notifyListeners();
+  }
+
+  /// Step back, or to [fallback] when there is nowhere to step back to.
+  void back({NexaScreen? fallback}) {
+    _presenceTimer?.cancel();
+    if (_history.isNotEmpty) {
+      _screen = _history.removeLast();
+    } else if (fallback != null) {
+      _screen = fallback;
+    }
+    notifyListeners();
+  }
+
+  /// Replace the whole history — used when a flow completes and going back
+  /// into it would make no sense.
+  void goRoot(NexaScreen screen) {
+    _presenceTimer?.cancel();
+    _history.clear();
+    _screen = screen;
+    notifyListeners();
+  }
+
+  // ------------------------------------------------------------------
+  // Onboarding and identity
+  // ------------------------------------------------------------------
+
+  void setName(String value) {
+    _name = value;
+    notifyListeners();
+  }
+
+  void setUsername(String value) {
+    _username = value;
+    notifyListeners();
+  }
+
+  void setEmail(String value) {
+    preferencesRepository.email = value;
+    notifyListeners();
+  }
+
+  /// Decides where a session that just became live should land: the
+  /// assistant, if onboarding is done; [NexaScreen.meeting], resuming at
+  /// whichever field is still missing, if it is not; or a real error state
+  /// if the check itself could not be answered.
+  ///
+  /// Call this, and only this, whenever a session has just become live —
+  /// after a real sign-in, and after a restored session on launch. Sign-up
+  /// does not call this: a brand-new account has no profile row by
+  /// definition, so `state.goRoot(NexaScreen.meeting)` directly, with
+  /// nothing to resume, is already correct and needs no network round trip
+  /// to confirm.
+  ///
+  /// A network or server failure here is never read as "this is a new
+  /// account" — that would mean a connectivity problem silently sent an
+  /// existing, fully onboarded person through onboarding again. It routes
+  /// to [NexaScreen.error] instead, which is real and retryable, not a
+  /// guess dressed up as one.
+  Future<void> routeAfterAuthentication() async {
+    final UserProfile profile;
+    try {
+      profile = await profileRepository.fetchMine();
+    } catch (_) {
+      goRoot(NexaScreen.error);
+      return;
+    }
+
+    if (profile.firstName != null) _name = profile.firstName!;
+    if (profile.username != null) _username = profile.username!;
+
+    if (profile.completed) {
+      _onboardingProfile = null;
+      goRoot(NexaTab.nexa.root);
+    } else {
+      _onboardingProfile = profile;
+      goRoot(NexaScreen.meeting);
+    }
+  }
+
+  /// The launch sequence has finished playing. Decide where it hands off to:
+  /// an authenticated account runs the real post-auth routing
+  /// ([routeAfterAuthentication] — assistant, resumed onboarding, or a real
+  /// error state); anyone else lands on Welcome.
+  ///
+  /// Called once, by [EntranceScreen], when its animation completes. Safe to
+  /// call again — it is a no-op after the first time, and after any code that
+  /// has already navigated away from [NexaScreen.entrance].
+  Future<void> completeEntrance() async {
+    if (_entranceDone) return;
+    _entranceDone = true;
+    // The session restore may still be in flight on a slow secure-storage
+    // read — wait for it so a returning account is recognised as one.
+    await (_boot ?? Future<void>.value());
+    if (_screen != NexaScreen.entrance) return;
+    if (authSession.isSignedIn) {
+      await routeAfterAuthentication();
+    } else {
+      goRoot(NexaScreen.welcome);
+    }
+  }
+
+  /// The sign-in / create-account cross link at the foot of the auth form.
+  void switchAuthScreen() {
+    _screen = _screen == NexaScreen.login
+        ? NexaScreen.signup
+        : NexaScreen.login;
+    notifyListeners();
+  }
+
+  /// Leave the account. Local only — no session exists to end yet.
+  void logOut() {
+    _history.clear();
+    _screen = NexaScreen.welcome;
+    _name = '';
+    _username = '';
+    _onboardingProfile = null;
+    notifyListeners();
+    // Synchronous and first: the app must stop treating itself as having a
+    // registered device the instant sign-out happens, not after a network
+    // call settles — see PhoneDeviceRepository.clearActiveDevice. The
+    // persisted record is left alone; restore() re-validates it against
+    // whoever signs in next.
+    phoneDevice.clearActiveDevice();
+    // Fire-and-forget: leaving the account must never wait on a network
+    // call, and this is safe to call whether or not a session was ever
+    // actually established — see AuthSessionRepository.logout.
+    unawaited(authSession.logout());
+  }
+
+  // ------------------------------------------------------------------
+  // Preferences
+  // ------------------------------------------------------------------
+
+  void updatePrefs(NexaPreferences next) {
+    preferencesRepository.update(next);
+    notifyListeners();
+  }
+
+  // ------------------------------------------------------------------
+  // Memory
+  // ------------------------------------------------------------------
+
+  void setMemoryFilter(MemoryFilter filter) {
+    _memoryFilter = filter;
+    notifyListeners();
+  }
+
+  void openMemory(String id) {
+    _memoryId = id;
+    go(NexaScreen.memoryDetail);
+  }
+
+  /// Forget one entry and leave the detail screen behind it.
+  void forgetMemory(String id) {
+    memoryRepository.forget(id);
+    _memoryId = null;
+    if (_screen == NexaScreen.memoryDetail) back(fallback: NexaScreen.memory);
+    notifyListeners();
+  }
+
+  void forgetAllMemories() {
+    memoryRepository.forgetAll();
+    notifyListeners();
+  }
+
+  // ------------------------------------------------------------------
+  // Devices and pairing
+  // ------------------------------------------------------------------
+
+  void openDevice(String id) {
+    _deviceId = id;
+    go(NexaScreen.deviceDetail);
+  }
+
+  void startPairing(String id) {
+    _deviceId = id;
+    _pairStep = 0;
+    _pairingPhase = PairingPhase.idle;
+    _pairingContext = null;
+    go(NexaScreen.pairIntro);
+  }
+
+  void beginGuide() {
+    _pairStep = 0;
+    _pairingPhase = PairingPhase.idle;
+    _pairingContext = null;
+    go(NexaScreen.pairing);
+  }
+
+  /// Recorded by whichever service is driving the pairing right now — the
+  /// link while the phone is finding and connecting to the headset, then the
+  /// TQRCG service while the code is on screen.
+  ///
+  /// A transition to [PairingPhase.failed] also clears [pairingContext] —
+  /// the one place that happens, so every caller gets it for free rather
+  /// than having to remember to clear stale discovery information itself.
+  /// Every other transition leaves it alone: coming back to an earlier guide
+  /// step must not throw away a headset already found (see
+  /// `PairingGuideScreen._startLink`'s own idempotence), and [setPairingContext]
+  /// is what actually populates it once discovery succeeds.
+  void setPairingPhase(PairingPhase phase) {
+    if (_pairingPhase == phase) return;
+    _pairingPhase = phase;
+    if (phase == PairingPhase.failed) _pairingContext = null;
+    notifyListeners();
+  }
+
+  /// Records what discovery learned about the headset this attempt just
+  /// connected to. Pass `null` to clear it explicitly (e.g. before a retry)
+  /// without waiting for a [PairingPhase.failed] transition.
+  void setPairingContext(HeadsetPairingContext? context) {
+    if (_pairingContext == context) return;
+    _pairingContext = context;
+    notifyListeners();
+  }
+
+  void setPairStep(int step) {
+    _pairStep = step;
+    notifyListeners();
+  }
+
+  /// The pairing completed. Record it and land on the confirmation.
+  void completePairing() {
+    final id = _deviceId;
+    if (id != null) deviceRepository.markPaired(id);
+    _pairingPhase = PairingPhase.paired;
+    _screen = NexaScreen.success;
+    notifyListeners();
+  }
+
+  void forgetDevice(String id) {
+    deviceRepository.forget(id);
+    notifyListeners();
+  }
+
+  // ------------------------------------------------------------------
+  // Presence
+  // ------------------------------------------------------------------
+
+  /// A scripted turn: Nexa listens, answers, then settles back to idle.
+  ///
+  /// The timing is local because no turn pipeline is attached yet; when
+  /// `@nexa/core` drives this, the same three states come from it.
+  void talk() {
+    if (isOn([NexaScreen.listening, NexaScreen.speaking])) {
+      _presenceTimer?.cancel();
+      _screen = NexaScreen.assistant;
+      notifyListeners();
+      return;
+    }
+    _presenceTimer?.cancel();
+    _screen = NexaScreen.listening;
+    notifyListeners();
+
+    _presenceTimer = Timer(const Duration(milliseconds: 2600), () {
+      _screen = NexaScreen.speaking;
+      notifyListeners();
+      _presenceTimer = Timer(const Duration(milliseconds: 5200), () {
+        _screen = NexaScreen.assistant;
+        notifyListeners();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _presenceTimer?.cancel();
+    unawaited(_lanSocket?.close());
+    super.dispose();
+  }
+}
+
+/// Hands the state down the tree without pulling in a state-management
+/// package.
+class NexaScope extends InheritedNotifier<NexaAppState> {
+  const NexaScope({
+    super.key,
+    required NexaAppState state,
+    required super.child,
+  }) : super(notifier: state);
+
+  static NexaAppState of(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<NexaScope>();
+    assert(scope != null, 'No NexaScope above this widget.');
+    return scope!.notifier!;
+  }
+}

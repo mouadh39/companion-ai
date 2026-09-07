@@ -17,15 +17,33 @@ export type {
   WaitAction,
   RememberAction,
   CallToolAction,
+  MoveAction,
+  FollowAction,
+  StopAction,
   Action,
   ActionType,
   ActionOfType,
   SpeechTone,
   GestureKind,
   LookTarget,
+  MoveTarget,
+  MoveTargetRole,
+  MoveDirection,
+  MoveMode,
+  DistanceUnit,
+  StopScope,
 } from '@nexa/models';
 export type { RejectionReason } from '@nexa/models';
-export { MAX_ACTIONS_PER_TURN, MAX_SPEAK_LENGTH, REJECTION_REASONS } from '@nexa/models';
+export {
+  MAX_ACTIONS_PER_TURN,
+  MAX_SPEAK_LENGTH,
+  REJECTION_REASONS,
+  MOVE_TARGET_ROLES,
+  MOVE_DIRECTIONS,
+  MOVE_MODES,
+  DISTANCE_UNITS,
+  STOP_SCOPES,
+} from '@nexa/models';
 
 export type { ActionRejection, ValidationOutcome } from './validate.js';
 export { validateAction, validateActions } from './validate.js';

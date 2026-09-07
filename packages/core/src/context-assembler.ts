@@ -1,5 +1,6 @@
 import type { Clock, CompanionId, TurnId, UserId } from '@nexa/shared';
 import type {
+  ClientCapabilities,
   CognitiveContext,
   ContextBudget,
   ContextSection,
@@ -19,6 +20,8 @@ import type {
   SectionOmission,
   Tool,
   WorldSnapshot,
+  BodyState,
+  SelfState,
 } from '@nexa/models';
 import { defaultBudget, timestamp } from '@nexa/models';
 import type { PortCall, PortOptions } from './execution/index.js';
@@ -53,6 +56,14 @@ export interface AssemblyRequest {
   readonly companionId: CompanionId;
   readonly userId: UserId;
   readonly perception: Perception;
+  /**
+   * What the connected client declared it can execute, or null.
+   *
+   * Passed straight onto the context rather than fetched by a contributor:
+   * this is a fact handed in with the request, not something any port knows,
+   * so it costs nothing to carry and never appears in `budget.omissions`.
+   */
+  readonly clientCapabilities: ClientCapabilities | null;
   /** The turn's remaining budget and cancellation signal. */
   readonly options: PortOptions;
 }
@@ -128,6 +139,8 @@ export const RETRIEVED_MEMORIES = contributorKey<readonly RetrievedMemory[]>(
 );
 export const TOOLS = contributorKey<readonly Tool[]>('tools', 'tools');
 export const WORLD = contributorKey<WorldSnapshot>('world', 'world');
+export const BODY = contributorKey<BodyState>('body', 'body');
+export const SELF = contributorKey<SelfState>('self', 'self');
 export const EMOTION = contributorKey<EmotionState | null>('emotion', 'emotion');
 export const RELATIONSHIP = contributorKey<Relationship | null>(
   'relationship',
@@ -209,6 +222,17 @@ export class ContextAssembler {
             },
             options,
           ),
+      });
+    }
+
+    const embodiment = ports.embodiment;
+    if (embodiment !== undefined) {
+      optional.push({
+        key: BODY,
+        dependsOn: [],
+        required: false,
+        budgetMs,
+        contribute: (view, options) => embodiment.state(view.companionId, options),
       });
     }
 
@@ -315,6 +339,41 @@ export class ContextAssembler {
       });
     }
 
+    const selfModel = ports.selfModel;
+    if (selfModel !== undefined) {
+      optional.push({
+        key: SELF,
+        // Identity is required, so it is always present; the body is optional
+        // and may legitimately be missing. Declaring both edges is what puts
+        // this in a wave after them rather than relying on registration order.
+        dependsOn: [IDENTITY, ...(ports.embodiment !== undefined ? [BODY] : [])],
+        required: false,
+        // Small on purpose: the reference implementation performs no I/O. A
+        // self model that needed a full port budget would be one that had
+        // started fetching rather than joining.
+        budgetMs,
+        contribute: async (view, options) => {
+          const identity = view.get(IDENTITY);
+          if (identity === undefined) {
+            // Unreachable while identity is required — a missing one fails the
+            // turn before this wave runs — but resolving a self with no
+            // identity would produce a companion describing nobody.
+            throw new Error('The self model ran without an identity.');
+          }
+
+          return selfModel.resolve(
+            {
+              companionId: view.companionId,
+              identity,
+              body: view.get(BODY) ?? null,
+              clientCapabilities: view.clientCapabilities,
+            },
+            options,
+          );
+        },
+      });
+    }
+
     return [
       ...optional,
       {
@@ -347,6 +406,7 @@ export class ContextAssembler {
         contribute: (view, options) =>
           this.#ports.workingMemory.recent(
             view.companionId,
+            view.userId,
             this.#options.workingMemoryLimit,
             options,
           ),
@@ -387,7 +447,7 @@ export class ContextAssembler {
   }
 
   async assemble(request: AssemblyRequest): Promise<AssemblyOutcome> {
-    const { companionId, userId, turnId, perception } = request;
+    const { companionId, userId, turnId, perception, clientCapabilities } = request;
 
     // The stage budget is carved from what the turn has left rather than being
     // a constant, so a slow perception stage shortens assembly instead of
@@ -400,7 +460,7 @@ export class ContextAssembler {
 
     const run = await runContributions(
       this.#waves,
-      { turnId, companionId, userId, perception },
+      { turnId, companionId, userId, perception, clientCapabilities },
       scoped,
     );
 
@@ -429,6 +489,8 @@ export class ContextAssembler {
       (run.values.get(RETRIEVED_MEMORIES.id) as readonly RetrievedMemory[] | undefined) ?? [];
     const availableTools = (run.values.get(TOOLS.id) as readonly Tool[] | undefined) ?? [];
     const world = (run.values.get(WORLD.id) as WorldSnapshot | undefined) ?? null;
+    const body = (run.values.get(BODY.id) as BodyState | undefined) ?? null;
+    const self = (run.values.get(SELF.id) as SelfState | undefined) ?? null;
     const emotion = (run.values.get(EMOTION.id) as EmotionState | null | undefined) ?? null;
     const relationship =
       (run.values.get(RELATIONSHIP.id) as Relationship | null | undefined) ?? null;
@@ -508,6 +570,37 @@ export class ContextAssembler {
       }
     }
 
+    if (attempted(BODY)) {
+      const failure = failureOf(BODY);
+      if (failure !== null) {
+        omissions.push({ section: 'body', reason: failure });
+      } else if (body === null) {
+        omissions.push({ section: 'body', reason: 'empty' });
+      } else {
+        // Estimated from the outcomes alone. The schema half of the section is
+        // rendered from the client's declaration rather than from this value,
+        // so charging it here would bill the body for tokens it did not cause.
+        spent.body = this.#estimate(
+          body.recentOutcomes.map((outcome) => outcome.detail ?? outcome.status).join('\n'),
+        );
+      }
+    }
+
+    if (attempted(SELF)) {
+      const failure = failureOf(SELF);
+      if (failure !== null) {
+        omissions.push({ section: 'self', reason: failure });
+      } else if (self === null) {
+        omissions.push({ section: 'self', reason: 'empty' });
+      } else {
+        // Estimated from the resolutions alone. The identity half is billed to
+        // the identity section, which already carries it.
+        spent.self = this.#estimate(
+          self.capabilities.map((capability) => capability.summary).join('\n'),
+        );
+      }
+    }
+
     if (attempted(EMOTION)) {
       const failure = failureOf(EMOTION);
       if (failure !== null) {
@@ -572,11 +665,14 @@ export class ContextAssembler {
       retrievedMemories,
       goals,
       availableTools,
+      clientCapabilities,
       // Null when the capability is not composed in, which the port calls in the
       // turn record distinguish from "composed in and returned nothing".
       emotion,
       relationship,
       world,
+      body,
+      self,
       plan,
       hint,
       // Null when no expression capability is composed in. Not a degradation:

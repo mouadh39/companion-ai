@@ -9,7 +9,7 @@ import {
   reviewInsight,
   reviewPass,
 } from '@nexa/reflection';
-import { USER, at, firstFormed, insightFrom, memoryOf, mintFrom, only } from './fixtures.js';
+import { COMPANION, USER, at, firstFormed, insightFrom, memoryOf, mintFrom, only } from './fixtures.js';
 
 const chess = (count: number) =>
   [
@@ -136,7 +136,7 @@ describe('what time alone does', () => {
     const first = reviewInsight(insight, at(190));
     if (first?.outcome !== 'weaken') throw new Error('expected a weakening');
 
-    const applied = applyDecisions([insight], [first], USER, mintFrom('ins'))[0];
+    const applied = applyDecisions([insight], [first], USER, COMPANION, mintFrom('ins'))[0];
     expect(applied).toBeDefined();
     expect(reviewInsight(applied as Insight, at(190))).toBeNull();
   });
@@ -166,6 +166,7 @@ describe('what time alone does', () => {
       [expiring],
       reviewPass([expiring], at(60)),
       USER,
+      COMPANION,
       mintFrom('ins'),
     );
 
@@ -191,6 +192,7 @@ describe('what time alone does', () => {
       [expiring],
       reviewPass([expiring], at(60)),
       USER,
+      COMPANION,
       mintFrom('ins'),
     );
 
@@ -215,7 +217,7 @@ describe('what time alone does', () => {
     const decision = reviewInsight(expiring, at(60));
     if (decision === null) throw new Error('expected a retirement');
 
-    const store = applyDecisions([expiring], [decision], USER, mintFrom('ins'));
+    const store = applyDecisions([expiring], [decision], USER, COMPANION, mintFrom('ins'));
 
     expect(store).toHaveLength(1);
     expect(store[0]?.status).toBe('retired');
@@ -283,7 +285,7 @@ describe('deleting the evidence deletes the conclusion', () => {
       at: at(50),
     });
 
-    const store = applyDecisions([held], result.decisions, USER, mintFrom('ins'));
+    const store = applyDecisions([held], result.decisions, USER, COMPANION, mintFrom('ins'));
     for (const insight of store) {
       expect(insight.supporting.some((entry) => entry.memoryId === gone)).toBe(false);
       expect(insight.opposing.some((entry) => entry.memoryId === gone)).toBe(false);

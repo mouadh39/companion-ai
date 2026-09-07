@@ -1,5 +1,9 @@
 import type { CompanionId, ProviderError, Result, ToolId, UserId } from '@nexa/shared';
 import type {
+  ActionOutcome,
+  BodyState,
+  ClientCapabilities,
+  SelfState,
   JsonObject,
   ConversationTurn,
   DecisionHint,
@@ -121,15 +125,22 @@ export interface ExpressionPort {
  * `append` is the turn's one mutation and belongs to the commit stage, not to
  * assembly; it is on this interface only because both halves address the same
  * store.
+ *
+ * Both halves are scoped by `(companionId, userId)`. A companion may speak to
+ * several people, and their exchanges are separate conversations — keying on
+ * the companion alone let one user read another's history back out of the
+ * prompt, which is a privacy failure rather than a storage detail.
  */
 export interface WorkingMemoryPort {
   recent(
     companionId: CompanionId,
+    userId: UserId,
     limit: number,
     options: PortOptions,
   ): Promise<readonly ConversationTurn[]>;
   append(
     companionId: CompanionId,
+    userId: UserId,
     turn: ConversationTurn,
     options: PortOptions,
   ): Promise<void>;
@@ -185,6 +196,83 @@ export interface WorldQuery {
  */
 export interface WorldPort {
   snapshot(query: WorldQuery, options: PortOptions): Promise<WorldSnapshot>;
+}
+
+/**
+ * What the client's body is doing, and what became of what it was last asked
+ * to do.
+ *
+ * Tier 1 and read-only, alongside the world model and for the same reason: the
+ * body is written continuously by something that is not the turn, and reasoning
+ * needs an immutable value taken at one instant rather than a live handle that
+ * changes underneath it.
+ *
+ * **This port is what makes the companion's claims about its own body
+ * checkable.** Without it the only thing that knows whether a movement happened
+ * is the client, and the only thing generating the sentence about it is a
+ * language model with no access to the client — so "did you move?" is answered
+ * by whatever usually follows being asked to move. `nexa.action.executed` has
+ * carried the note since Milestone 1: the backend does not know whether an
+ * action ran until it is told. This is where being told arrives.
+ *
+ * Deliberately not a `move()` or `execute()`. Core never commands a body; it
+ * emits actions and the client performs them. A write method here would make
+ * the turn responsible for driving locomotion, which is the coupling ADR-001
+ * exists to prevent — and would put a walking person's tracking loop on the
+ * conversational path.
+ */
+export interface EmbodimentPort {
+  state(companionId: CompanionId, options: PortOptions): Promise<BodyState>;
+}
+
+/**
+ * Everything a self model needs. A read-only projection of what assembly
+ * already produced.
+ *
+ * Shaped as a request object rather than a list of arguments for the same
+ * reason {@link DecisionAdviceRequest} is: it is a view over other
+ * contributors' output, and an implementation that later reads one more field
+ * should not be a signature change on every call site.
+ */
+export interface SelfModelRequest {
+  readonly companionId: CompanionId;
+  /** The frozen self-definition, as loaded by {@link IdentityPort}. */
+  readonly identity: IdentityProfile;
+  /**
+   * What the body last reported, or null when no embodiment capability is
+   * composed.
+   *
+   * Taken from {@link EmbodimentPort} rather than re-fetched. A second read of
+   * the body would be a second answer to "did that movement happen", and the
+   * whole point of the action-result loop is that there is exactly one.
+   */
+  readonly body: BodyState | null;
+  /** What this session's client can render, or null when it declared nothing. */
+  readonly clientCapabilities: ClientCapabilities | null;
+}
+
+/**
+ * Resolves what the companion can truthfully say about itself right now.
+ *
+ * Runs in the **last assembly wave**, after identity and the body report, so
+ * its input is other contributors' output rather than a fetch of its own. The
+ * reference implementation performs no I/O at all — it is a pure join over
+ * values already in hand — which is why its budget can be small and why a
+ * replayed turn reproduces it exactly.
+ *
+ * It is a port rather than a function call for the same reason
+ * {@link ExpressionPort} is: which engine resolves the self is a deployment
+ * decision, and Core must not import the package that does it.
+ *
+ * **Nothing writes through this port.** The companion's capabilities are
+ * derived from what the composition root wired, what the client declared, and
+ * what the body reported. There is deliberately no method by which a turn, a
+ * tool, or a language model could grant a capability — a system where the thing
+ * describing itself can also edit the description is a system whose
+ * self-description means nothing.
+ */
+export interface SelfModelPort {
+  resolve(request: SelfModelRequest, options: PortOptions): Promise<SelfState>;
 }
 
 /**
@@ -259,10 +347,36 @@ export interface DecisionAdvisorPort {
  * `propose`, not `store`: Core never decides what is worth remembering
  * long-term, only that something might be. Scoring and consolidation belong to
  * the worker, and the user must never wait on either.
+ *
+ * `userId` is part of the signature rather than something the implementation
+ * infers, because a memory with no owner is one that can be handed to the wrong
+ * person. The owner travels with the proposal.
  */
+/**
+ * Records what a client reported about an action it was asked to perform.
+ *
+ * Egress-shaped but not called from the turn: outcomes arrive on their own
+ * schedule, from the client, long after the turn that generated the action has
+ * returned. It is declared here because it is the write half of
+ * {@link EmbodimentPort} and the two must be implemented against one store —
+ * separating them across packages is how a report gets recorded somewhere the
+ * next turn does not read.
+ *
+ * `report` rather than `record`: the client is the authority on what happened,
+ * and the backend is receiving testimony rather than deciding an outcome.
+ */
+export interface ActionOutcomePort {
+  report(
+    companionId: CompanionId,
+    outcome: ActionOutcome,
+    options: PortOptions,
+  ): Promise<void>;
+}
+
 export interface MemoryWritePort {
   propose(
     companionId: CompanionId,
+    userId: UserId,
     candidate: MemoryCandidate,
     options: PortOptions,
   ): Promise<void>;
@@ -405,6 +519,40 @@ export interface LanguageModelPort {
  * `ToolPort` doing both would make the read path inherit the write path's risk
  * — and the read path is the one called on every single turn.
  */
+/**
+ * Turns text into a vector.
+ *
+ * A port rather than a direct dependency for the same reason
+ * {@link LanguageModelPort} is one: which model produces the numbers is a
+ * deployment decision, and a test must be able to answer without a network or
+ * a key. `@nexa/retrieval` never sees this — it compares vectors the caller
+ * supplies and performs no I/O, which is what keeps ranking replayable.
+ *
+ * `model` and `dimensions` are surfaced because vectors from different models
+ * are not comparable. The cosine between them is an ordinary number that means
+ * nothing, so `EmbeddingReference` records both and `similarityOf` refuses the
+ * comparison when they disagree. A port that hid them would make a model
+ * upgrade a silent corruption instead of a detectable backfill.
+ */
+export interface EmbeddingPort {
+  readonly name: string;
+  /** The model these vectors come from, e.g. `text-embedding-3-small`. */
+  readonly model: string;
+  readonly dimensions: number;
+  /**
+   * Embeds a batch, in order.
+   *
+   * A batch rather than one string, because every provider charges and waits
+   * per request rather than per input, and the backfill would otherwise be one
+   * round trip per memory. The result is positional: index `i` is the vector
+   * for input `i`.
+   */
+  embed(
+    inputs: readonly string[],
+    options: PortOptions,
+  ): Promise<Result<readonly (readonly number[])[], ProviderError>>;
+}
+
 export interface ToolExecutionPort {
   execute(
     request: ToolExecutionRequest,
@@ -450,6 +598,22 @@ export interface ContextPorts {
   readonly tokens: TokenEstimatorPort;
 
   readonly world?: WorldPort;
+  /**
+   * Absent means the companion has no way to learn what its body did. Not a
+   * degradation — a companion with no body has nothing to report — but it is
+   * the difference between a body that is driven and one that is *observed*,
+   * and generation is told which of the two this is.
+   */
+  readonly embodiment?: EmbodimentPort;
+  /**
+   * Resolves identity, capabilities and body state into one authoritative
+   * answer about the companion.
+   *
+   * Absent means generation describes the body from the client's declaration
+   * alone, exactly as it did before this port existed. Not a degradation — a
+   * deployment without a self model is not missing something it had.
+   */
+  readonly selfModel?: SelfModelPort;
   readonly emotion?: EmotionPort;
   readonly relationship?: RelationshipPort;
   readonly plan?: PlanReadPort;

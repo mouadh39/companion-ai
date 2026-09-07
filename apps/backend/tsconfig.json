@@ -12,7 +12,14 @@
     { "path": "../../packages/actions" },
     { "path": "../../packages/core" },
     { "path": "../../packages/identity" },
+    { "path": "../../packages/self" },
     { "path": "../../packages/personality" },
+    { "path": "../../packages/memory" },
+    { "path": "../../packages/reflection" },
+    { "path": "../../packages/retrieval" },
+    { "path": "../../packages/perception" },
+    { "path": "../../packages/planning" },
+    { "path": "../../packages/relationship" },
     { "path": "../../packages/providers" }
   ]
 }

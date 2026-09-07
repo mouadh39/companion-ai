@@ -1,5 +1,10 @@
 import type { CompanionId, TurnId, UserId } from '@nexa/shared';
-import type { ContextSection, Perception, PortOutcome } from '@nexa/models';
+import type {
+  ClientCapabilities,
+  ContextSection,
+  Perception,
+  PortOutcome,
+} from '@nexa/models';
 import type { PortOptions } from '../execution/index.js';
 
 /**
@@ -38,6 +43,18 @@ export interface ContributionRequest {
   readonly companionId: CompanionId;
   readonly userId: UserId;
   readonly perception: Perception;
+  /**
+   * What the connected client declared it can execute, or null when it declared
+   * nothing.
+   *
+   * A fact about the turn in exactly the way `perception` is: carried through
+   * from the request rather than fetched, owned by no contributor, and true for
+   * the whole pass. It is here because resolving what the companion can
+   * presently do requires knowing what this session can render — a capability
+   * the backend has and the client cannot receive is not one the companion may
+   * offer.
+   */
+  readonly clientCapabilities: ClientCapabilities | null;
 }
 
 /**

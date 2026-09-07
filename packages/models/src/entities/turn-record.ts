@@ -109,7 +109,16 @@ export type DiagnosticCode =
   /** A context section did not make it into the prompt. */
   | 'context_section_dropped'
   /** A stage was entered with no budget left. */
-  | 'deadline_exhausted';
+  | 'deadline_exhausted'
+  /**
+   * The model emitted an action block that could not be read.
+   *
+   * A warning rather than an error: the prose alongside it is still a real
+   * answer, so the turn keeps it and drops the actions. Without this code that
+   * degradation is invisible, and a model quietly emitting malformed JSON on
+   * every embodied turn looks exactly like a companion that never moves.
+   */
+  | 'action_block_malformed';
 
 export const DIAGNOSTIC_CODES = [
   'tool_loop_exhausted',
@@ -121,6 +130,7 @@ export const DIAGNOSTIC_CODES = [
   'action_unsupported_by_client',
   'context_section_dropped',
   'deadline_exhausted',
+  'action_block_malformed',
 ] as const satisfies readonly DiagnosticCode[];
 
 /**

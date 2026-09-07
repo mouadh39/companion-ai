@@ -16,5 +16,8 @@ export type {
 } from './tool-loop.js';
 export { runToolLoop, defaultToolLoopLimits, toneFor } from './tool-loop.js';
 
+export type { ActionBlockResult, ActionBlockDiagnostic } from './action-block.js';
+export { readActionBlock, renderActionSchema } from './action-block.js';
+
 export type { TurnSink } from './sink.js';
 export { deliver } from './sink.js';

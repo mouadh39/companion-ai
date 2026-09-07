@@ -14,14 +14,27 @@
     "lint": "eslint src test --no-error-on-unmatched-pattern --max-warnings 0"
   },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
     "@nexa/actions": "workspace:*",
     "@nexa/core": "workspace:*",
     "@nexa/events": "workspace:*",
     "@nexa/identity": "workspace:*",
+    "@nexa/memory": "workspace:*",
     "@nexa/models": "workspace:*",
+    "@nexa/perception": "workspace:*",
     "@nexa/personality": "workspace:*",
+    "@nexa/planning": "workspace:*",
     "@nexa/providers": "workspace:*",
+    "@nexa/reflection": "workspace:*",
+    "@nexa/relationship": "workspace:*",
+    "@nexa/retrieval": "workspace:*",
+    "@nexa/self": "workspace:*",
     "@nexa/shared": "workspace:*",
-    "fastify": "^5.2.0"
+    "fastify": "^5.2.0",
+    "jose": "^6.2.10",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
   }
 }

@@ -64,7 +64,14 @@ const perception = {
 };
 
 const assemble = async (extra: Partial<ContextPorts> = {}) =>
-  assembler(extra).assemble({ turnId, companionId, userId, perception, options: options() });
+  assembler(extra).assemble({
+    turnId,
+    companionId,
+    userId,
+    perception,
+    clientCapabilities: null,
+    options: options(),
+  });
 
 const worldSnapshot: WorldSnapshot = {
   objects: [],

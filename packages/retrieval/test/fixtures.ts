@@ -24,10 +24,11 @@ import {
   timestamp,
   valence,
 } from '@nexa/models';
-import type { InsightId, MemoryId, UserId } from '@nexa/shared';
+import type { CompanionId, InsightId, MemoryId, UserId } from '@nexa/shared';
 
 export const NOW = '2026-08-01T12:00:00.000Z';
 export const USER = 'user-1' as UserId;
+export const COMPANION = 'companion-1' as CompanionId;
 
 export const at = (days = 0): Timestamp =>
   timestamp(new Date(Date.parse(NOW) + days * 86_400_000).toISOString());
@@ -43,6 +44,7 @@ export const memoryOf = (
 ): Memory => ({
   id: `mem-${slug(content)}` as MemoryId,
   userId: USER,
+  companionId: COMPANION,
   type: subject === 'milestone' ? 'episodic' : 'semantic',
   subject,
   content,
@@ -73,6 +75,7 @@ export const insightOf = (
 ): Insight => ({
   id: `ins-${slug(statement)}` as InsightId,
   userId: USER,
+  companionId: COMPANION,
   key: insightKey(kind, `literal:${slug(statement)}`),
   kind,
   topicKey: `literal:${slug(statement)}`,
