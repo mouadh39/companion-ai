@@ -1,4 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import fastifyCors from '@fastify/cors';
+import { corsPolicy } from './cors.js';
 import {
   trustExternalId,
   type ActionId,
@@ -394,6 +396,30 @@ export const admitForCompanion = async (
 
 export const buildServer = (app: Application, config: AppConfig): FastifyInstance => {
   const server = Fastify({ logger: { level: config.logLevel } });
+
+  // Cross-origin access for the browser client (Flutter Web). `@fastify/cors`
+  // registers on the `onRequest` hook — the earliest — so a preflight OPTIONS
+  // is answered here, before routing and before any handler's `authenticate()`
+  // call. A real (non-OPTIONS) request still reaches its handler and
+  // authenticates exactly as before; it only gains an
+  // `Access-Control-Allow-Origin` header when the caller's origin is on the
+  // allowlist. A request with no `Origin` header — the mobile app, curl,
+  // anything server-to-server — is untouched, headers and all. See `cors.ts`.
+  const policy = corsPolicy(config.corsOrigins ?? []);
+  // `register` returns a thenable; the plugin is a `fastify-plugin`, so it
+  // applies to the whole instance regardless of order, and Fastify drains the
+  // register queue on `ready()`/`listen()`/`inject()`. Nothing to await.
+  void server.register(fastifyCors, {
+    origin: (origin, callback) => {
+      // No `Origin` header: not a browser CORS request. Allowed through with
+      // no CORS headers — exactly how every non-browser client already talks
+      // to this API.
+      callback(null, origin !== undefined && policy.allows(origin));
+    },
+    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['authorization', 'content-type'],
+    maxAge: 600,
+  });
 
   // 20 attempts per 5 minutes per source address — generous for a legitimate
   // headset enrolling once, and bounded for anything else. See

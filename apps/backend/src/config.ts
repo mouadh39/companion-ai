@@ -1,4 +1,5 @@
 import { ConfigurationError } from '@nexa/shared';
+import { parseCorsOrigins } from './cors.js';
 
 /**
  * Configuration, read once at startup.
@@ -113,6 +114,16 @@ export interface AppConfig {
   readonly deviceTokenSecret: string | null;
   readonly embeddingModel: string;
   readonly embeddingDimensions: number;
+  /**
+   * Browser origins allowed to read responses from this API, from
+   * `NEXA_CORS_ORIGINS` (comma-separated). Empty when unset — CORS off, the
+   * previous behaviour. See `cors.ts` for the entry syntax and why a `:*`
+   * wildcard is loopback-only.
+   *
+   * Optional in the type so the many inline test `AppConfig`s do not all need
+   * updating; `loadConfig` always sets it (to the parsed list or `[]`).
+   */
+  readonly corsOrigins?: readonly string[];
 }
 
 /**
@@ -200,5 +211,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       1_536,
       'NEXA_EMBEDDING_DIMENSIONS',
     ),
+    corsOrigins: parseCorsOrigins(env['NEXA_CORS_ORIGINS']),
   };
 };
