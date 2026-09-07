@@ -375,6 +375,7 @@ export class CognitiveTurn {
         companionId: request.companionId,
         userId: request.userId,
         perception,
+        clientCapabilities: request.clientCapabilities ?? null,
         options,
       });
       context = assembled.context;
@@ -474,6 +475,7 @@ export class CognitiveTurn {
     try {
       await this.#deps.workingMemory.append(
         request.companionId,
+        request.userId,
         { role: 'user', content: request.text, at: context.at },
         options,
       );
@@ -482,6 +484,7 @@ export class CognitiveTurn {
       if (spoken !== undefined && spoken.type === 'speak') {
         await this.#deps.workingMemory.append(
           request.companionId,
+          request.userId,
           { role: 'companion', content: spoken.text, at: timestamp(clock.nowIso()) },
           options,
         );
@@ -514,7 +517,12 @@ export class CognitiveTurn {
         source: 'user_stated' as const,
         tags: perception.entities,
       };
-      await this.#deps.memoryWrite.propose(request.companionId, candidate, options);
+      await this.#deps.memoryWrite.propose(
+        request.companionId,
+        request.userId,
+        candidate,
+        options,
+      );
       await events.publish(
         memoryCandidateCreated(correlation, {
           candidateId: turnId,

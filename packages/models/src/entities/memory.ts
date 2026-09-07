@@ -1,4 +1,4 @@
-import type { MemoryId, UserId } from '@nexa/shared';
+import type { CompanionId, MemoryId, UserId } from '@nexa/shared';
 import type { MemorySource, MemoryType } from '../enums/memory.js';
 import type { MemorySubject } from './memory-formation.js';
 import type { ConfidenceScore, ImportanceScore, Valence } from '../value-objects/score.js';
@@ -25,6 +25,14 @@ export interface Memory {
    * nullable owner is how cross-tenant leaks happen at the query layer.
    */
   readonly userId: UserId;
+  /**
+   * Which companion holds it.
+   *
+   * A real field rather than a `metadata` entry, because it is half of the
+   * ownership boundary every read must filter on. Ownership that lives in a
+   * loose bag is ownership a query can forget to apply.
+   */
+  readonly companionId: CompanionId;
   readonly type: MemoryType;
   /**
    * What the memory is about.

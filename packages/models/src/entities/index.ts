@@ -99,6 +99,7 @@ export {
   UNRESTRICTED_CLIENT,
   VOICE_ONLY_CLIENT,
   canRender,
+  speaksAloud,
 } from './client-capabilities.js';
 
 export type { WorldSnapshot } from './world-snapshot.js';
@@ -339,9 +340,19 @@ export type {
   WaitAction,
   RememberAction,
   CallToolAction,
+  MoveAction,
+  FollowAction,
+  StopAction,
   SpeechTone,
   GestureKind,
   LookTarget,
+  MoveTarget,
+  MoveTargetRole,
+  MoveDirection,
+  MoveMode,
+  DistanceUnit,
+  StopScope,
+  EmbodiedActionType,
   RejectionReason,
 } from './action.js';
 export {
@@ -349,10 +360,35 @@ export {
   SPEECH_TONES,
   GESTURE_KINDS,
   LOOK_TARGETS,
+  MOVE_TARGET_ROLES,
+  MOVE_DIRECTIONS,
+  MOVE_MODES,
+  DISTANCE_UNITS,
+  STOP_SCOPES,
+  EMBODIED_ACTION_TYPES,
+  isEmbodiedAction,
   REJECTION_REASONS,
   MAX_ACTIONS_PER_TURN,
   MAX_SPEAK_LENGTH,
 } from './action.js';
+
+export type {
+  ActionOutcome,
+  ActionOutcomeStatus,
+  ActionFailureReason,
+  BodyState,
+  BodyActivity,
+} from './action-outcome.js';
+export {
+  ACTION_OUTCOME_STATUSES,
+  ACTION_FAILURE_REASONS,
+  BODY_ACTIVITIES,
+  BODY_STATE_FRESHNESS_MS,
+  MAX_RECENT_OUTCOMES,
+  succeeded,
+  worthReporting,
+  unknownBodyState,
+} from './action-outcome.js';
 
 export type {
   TurnStage,
@@ -388,3 +424,49 @@ export {
   SESSION_SILENCE_TIMEOUT_MS,
   MIN_ACTIONABLE_TRANSCRIPT_CONFIDENCE,
 } from './voice-session.js';
+
+export type {
+  FacultyKey,
+  DeviceKind,
+  CapabilityRequirement,
+} from './faculty.js';
+export {
+  FACULTY_KEYS,
+  DEVICE_KINDS,
+  needsFaculty,
+  needsAction,
+  needsDevice,
+} from './faculty.js';
+
+export type {
+  SelfState,
+  CapabilityResolution,
+  CapabilityStatus,
+  CapabilityReason,
+  CapabilityRecovery,
+  DeviceDescriptor,
+  DeviceStatus,
+  SkillDescriptor,
+  SkillResolution,
+  SkillSource,
+  SkillValidation,
+  SkillStatus,
+  SkillReason,
+} from './self.js';
+export {
+  CAPABILITY_STATUSES,
+  CAPABILITY_REASONS,
+  CAPABILITY_RECOVERIES,
+  DEVICE_STATUSES,
+  SKILL_SOURCES,
+  SKILL_VALIDATIONS,
+  SKILL_STATUSES,
+  SKILL_REASONS,
+  isUsable,
+  isOfferable,
+  usableCapabilities,
+  unusableCapabilities,
+  capabilityOf,
+  usableSkills,
+  capabilitiesLackingSkills,
+} from './self.js';

@@ -7,11 +7,12 @@ import type {
   Timestamp,
 } from '@nexa/models';
 import { confidence, importance, timestamp, valence } from '@nexa/models';
-import type { InsightId, MemoryId, UserId } from '@nexa/shared';
+import type { CompanionId, InsightId, MemoryId, UserId } from '@nexa/shared';
 import { materialise } from '@nexa/reflection';
 
 export const NOW = '2026-08-01T12:00:00.000Z';
 export const USER = 'user-1' as UserId;
+export const COMPANION = 'companion-1' as CompanionId;
 
 export const at = (days = 0): Timestamp =>
   timestamp(new Date(Date.parse(NOW) + days * 86_400_000).toISOString());
@@ -31,6 +32,7 @@ export const memoryOf = (
 ): Memory => ({
   id: `mem-${content.toLowerCase().replace(/[^a-z0-9]+/gu, '-').slice(0, 28)}` as MemoryId,
   userId: USER,
+  companionId: COMPANION,
   type: 'semantic',
   subject: 'temporary',
   content,
@@ -56,7 +58,7 @@ export const mintFrom = (prefix: string) => {
 };
 
 export const insightFrom = (draft: InsightDraft, id = 'ins-1'): Insight =>
-  materialise(draft, id as InsightId, USER);
+  materialise(draft, id as InsightId, USER, COMPANION);
 
 export const formations = (result: ReflectionResult): readonly InsightDraft[] =>
   result.decisions

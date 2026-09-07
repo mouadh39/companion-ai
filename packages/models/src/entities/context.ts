@@ -9,8 +9,11 @@ import type { Tool } from './tool.js';
 import type { EmotionState } from './emotion.js';
 import type { Relationship } from './relationship.js';
 import type { WorldSnapshot } from './world-snapshot.js';
+import type { BodyState } from './action-outcome.js';
+import type { SelfState } from './self.js';
 import type { TaskPlan } from './plan.js';
 import type { DecisionHint } from './decision.js';
+import type { ClientCapabilities } from './client-capabilities.js';
 import type { MessageRole } from '../enums/conversation.js';
 import type { Timestamp } from '../value-objects/timestamp.js';
 
@@ -26,6 +29,8 @@ export type ContextSection =
   | 'relationship'
   | 'emotion'
   | 'world'
+  | 'body'
+  | 'self'
   | 'tools';
 
 export const CONTEXT_SECTIONS = [
@@ -37,6 +42,8 @@ export const CONTEXT_SECTIONS = [
   'relationship',
   'emotion',
   'world',
+  'body',
+  'self',
   'tools',
 ] as const satisfies readonly ContextSection[];
 
@@ -137,6 +144,14 @@ export const defaultBudget = (totalLimit = 12_000): ContextBudget => ({
     relationship: 600,
     emotion: 300,
     world: 800,
+    // Small on purpose. The body section is a fixed schema plus at most five
+    // one-line outcomes; anything larger means something is rendering state
+    // that belongs on the client.
+    body: 500,
+    // The self section renders a fixed capability list plus a handful of
+    // one-line reasons. Anything larger means it has started restating
+    // something another section already owns.
+    self: 700,
     tools: 800,
   },
   spent: {},
@@ -222,6 +237,23 @@ export interface CognitiveContext {
    */
   readonly goals: readonly Goal[];
   readonly availableTools: readonly Tool[];
+
+  /**
+   * What the connected client has declared it can execute, or null when it
+   * declared nothing.
+   *
+   * Carried through from the turn request rather than assembled — this is not
+   * a capability the companion has, it is a fact about who is asking, so no
+   * port fetches it and no omission is ever recorded for it. Generation reads
+   * it to decide what to tell the model is physically possible this turn.
+   *
+   * Deliberately the opposite default from validation's "undeclared means
+   * unrestricted": a client that says nothing gets every *action type*
+   * (validation has no reason to withhold one), but the model is never told it
+   * has a body unless a client has actually said so. Claiming a physical
+   * presence that is not there is worse than staying silent about one that is.
+   */
+  readonly clientCapabilities: ClientCapabilities | null;
   /** The companion's read of the user's state, or null when nothing was inferred. */
   readonly emotion: EmotionState | null;
   /** Null until a relationship record exists — the very first turn with a user. */
@@ -237,6 +269,36 @@ export interface CognitiveContext {
    * that tracks quality in a system designed to degrade quietly.
    */
   readonly world: WorldSnapshot | null;
+
+  /**
+   * What the companion's body is doing, as the *client* last reported it.
+   *
+   * Null when no embodiment capability is composed in — not a degradation, for
+   * the same reason an absent world model is not. A companion with no body has
+   * nothing to report about one.
+   *
+   * The authoritative answer, and the only one generation may base a claim
+   * about a physical result on. The language model asked for the movement; it
+   * has no access to whether the movement happened, and treating its confidence
+   * as evidence is how a companion comes to say "done" about something it never
+   * did. This field is the evidence.
+   */
+  readonly body: BodyState | null;
+
+  /**
+   * What the companion can truthfully say about itself right now.
+   *
+   * Identity, resolved capabilities and body state as one derived value. Null
+   * when no self model is composed in — not a degradation, for the same reason
+   * an absent world model is not.
+   *
+   * Derived rather than fetched: every input was already assembled by an
+   * earlier wave, so this costs a pure join rather than a round trip, and a
+   * replayed turn reproduces it exactly. Nothing downstream may write to it —
+   * a companion that could edit its own description would have a description
+   * that means nothing.
+   */
+  readonly self: SelfState | null;
 
   /**
    * The plan in progress, as of the last planning pass.

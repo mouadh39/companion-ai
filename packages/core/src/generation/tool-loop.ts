@@ -8,8 +8,9 @@ import type {
   ModelCall,
   Tool,
 } from '@nexa/models';
-import { importance } from '@nexa/models';
+import { importance, isEmbodiedAction } from '@nexa/models';
 import type { Action, SpeakAction } from '@nexa/actions';
+import { readActionBlock } from './action-block.js';
 import type { PortOptions } from '../execution/index.js';
 import { callPort } from '../execution/index.js';
 import type {
@@ -65,6 +66,35 @@ export interface ToolLoopLimits {
   readonly maxTotalTokens: number;
   /** Ceiling for a single provider call. */
   readonly maxOutputTokens: number;
+  /**
+   * Ceiling for a single provider call when the client speaks the answer aloud.
+   *
+   * Lower than {@link maxOutputTokens} because the two media have different
+   * costs. Tokens a reader skips in a second are tokens a listener must sit
+   * through in real time, and the ceiling that merely bounds a bill for a chat
+   * client bounds a *monologue* for a voice one: 1024 tokens is roughly five
+   * minutes of speech, which no conversation survives.
+   *
+   * Applied as a floor against {@link maxOutputTokens}, never as an override —
+   * an operator who lowered the global ceiling meant it, and a voice turn must
+   * not quietly raise it back up.
+   *
+   * ## Why this is not as small as the spoken length suggests
+   *
+   * On a reasoning model this budget is not the answer's length — it is the
+   * answer *plus* the thinking that produced it. `openai/gpt-oss-120b` bills
+   * reasoning tokens against `max_completion_tokens`, and a two-sentence reply
+   * measured here costs 100–171 completion tokens with 94–420 characters of
+   * reasoning behind it. When reasoning consumes the whole budget before any
+   * prose is emitted, the provider returns `finish_reason: length` with empty
+   * content, and the turn fails outright — the user hears nothing at all.
+   *
+   * That was observed at 384: roughly one spoken turn in five died this way.
+   * The ceiling that actually governs spoken length is the prompt instruction,
+   * not this number, so the right size here is "comfortably above what the
+   * model needs to think", not "the length we want back".
+   */
+  readonly voiceMaxOutputTokens: number;
   /** Ceiling for a single tool invocation. */
   readonly toolTimeoutMs: number;
 }
@@ -73,6 +103,10 @@ export const defaultToolLoopLimits: ToolLoopLimits = {
   maxIterations: 4,
   maxTotalTokens: 32_000,
   maxOutputTokens: 1_024,
+  // Headroom for reasoning plus a short spoken answer, and still well under the
+  // 1024 a text client gets. Spoken brevity is enforced by the prompt, which
+  // holds replies to a few hundred characters regardless of what this permits.
+  voiceMaxOutputTokens: 640,
   toolTimeoutMs: 5_000,
 };
 
@@ -208,7 +242,7 @@ export const runToolLoop = async (
 
     // No tool calls means the model considers itself finished.
     if (completion.toolCalls.length === 0) {
-      return finish(completion, request, done, toolCallCount);
+      return finish(completion, request, done, toolCallCount, diagnose);
     }
 
     // Every limit below stops the loop *and answers with what is in hand*
@@ -220,7 +254,7 @@ export const runToolLoop = async (
         'warning',
         `Stopped after ${String(limits.maxIterations)} tool rounds with work outstanding.`,
       );
-      return finish(completion, request, done, toolCallCount);
+      return finish(completion, request, done, toolCallCount, diagnose);
     }
 
     if (spentTokens >= limits.maxTotalTokens) {
@@ -229,7 +263,7 @@ export const runToolLoop = async (
         'warning',
         `Stopped after ${String(spentTokens)} tokens, over the ${String(limits.maxTotalTokens)} ceiling.`,
       );
-      return finish(completion, request, done, toolCallCount);
+      return finish(completion, request, done, toolCallCount, diagnose);
     }
 
     if (options.deadline.remainingMs() <= limits.toolTimeoutMs) {
@@ -238,7 +272,7 @@ export const runToolLoop = async (
         'warning',
         'Stopped before invoking tools: not enough time left to use the results.',
       );
-      return finish(completion, request, done, toolCallCount);
+      return finish(completion, request, done, toolCallCount, diagnose);
     }
 
     const executor = dependencies.tools;
@@ -246,7 +280,7 @@ export const runToolLoop = async (
       // Unreachable while `canUseTools` gates the offer, but a model can return
       // a tool call it was never offered, and a crash here would cost the turn.
       diagnose('model_capability_missing', 'error', 'The model requested a tool with no executor configured.');
-      return finish(completion, request, done, toolCallCount);
+      return finish(completion, request, done, toolCallCount, diagnose);
     }
 
     // Independent calls, so they run together. A model asking for three
@@ -335,21 +369,41 @@ const finish = (
     toolCallCount: number,
   ) => GenerationOutcome,
   toolCallCount: number,
+  diagnose: (code: DiagnosticCode, severity: DiagnosticSeverity, detail: string) => void,
 ): GenerationOutcome => {
-  const text = completion.text.trim();
-  if (text.length === 0) {
+  // The client's declaration is the gate, exactly as it is for whether the
+  // model was told a body exists at all. A client that declared nothing is
+  // never offered the block, so an unembodied session cannot produce body
+  // actions even if the model invents the syntax.
+  const declared = request.context.clientCapabilities?.actions ?? [];
+  const embodied = declared.filter(isEmbodiedAction);
+
+  const block = readActionBlock(completion.text, request.decision.id, embodied);
+  for (const diagnostic of block.diagnostics) {
+    diagnose(diagnostic.code, diagnostic.severity, diagnostic.detail);
+  }
+
+  const text = block.prose;
+
+  // An empty completion is a failure; a completion that was *only* a block is
+  // not. The second is a companion that acted without narrating, which is a
+  // legitimate answer to "stop" — and failing the turn would throw away an
+  // action the body is entitled to perform.
+  if (text.length === 0 && block.actions.length === 0) {
     return done([], new Error('The model returned an empty response.'), toolCallCount);
   }
 
-  const actions: Action[] = [
-    {
+  const actions: Action[] = [...block.actions];
+
+  if (text.length > 0) {
+    actions.push({
       id: newActionId(),
       type: 'speak',
       decisionId: request.decision.id,
       text,
       tone: toneFor(request.context, request.decision),
-    },
-  ];
+    });
+  }
 
   // The decision to remember is surfaced as its own action so it appears in the
   // action stream and the audit trail. The write itself is asynchronous.

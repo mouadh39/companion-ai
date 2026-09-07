@@ -55,12 +55,11 @@ const capturingModel = (captured: Captured): LanguageModelPort => ({
 /**
  * Perception that reports a *confident* emotional read.
  *
- * The shipped `HeuristicPerception` reports every reading at 0.55, and
- * `MIN_ACTIONABLE_EMOTION_CONFIDENCE` is 0.60 — so through the default wiring
- * no emotional signal is ever acted on. That is the engine behaving correctly:
- * weak signals are ignored rather than scaled down. Demonstrating the paths that
- * need a confident reading therefore requires substituting perception, exactly
- * as demonstrating a fixed time requires substituting the clock.
+ * Pins a specific emotion at a specific strength. The real engine reaches these
+ * confidences for a *stated* feeling, so this is no longer the only way to get
+ * here — but a test that needs one named emotion should say which, rather than
+ * depending on the lexicon continuing to read a particular sentence a particular
+ * way. Substituting perception here is the same seam as substituting the clock.
  */
 const confidentPerception = (emotion: UserEmotion): PerceptionPort => ({
   perceive: async (text: string): Promise<Perception> => ({
@@ -198,11 +197,13 @@ describe('the Personality Engine reaches a live turn', () => {
     expect(spoken.tone).toBe('concerned');
   });
 
-  it('ignores a sub-threshold reading from the shipped heuristic, as designed', async () => {
-    // `HeuristicPerception` matches 'not working' as frustration but reports it
-    // at 0.55, below the 0.60 floor. The engine must therefore treat this as no
-    // signal at all — scaling a weak guess down instead of discarding it is how
-    // a companion ends up permanently, slightly wrong about how everyone feels.
+  it('ignores a sub-threshold reading from the real engine, as designed', async () => {
+    // `@nexa/perception` reads 'nothing is working' as *possible* frustration:
+    // a report about a build, not about a person. Inference is capped well below
+    // a statement, so the reading lands under the floor the projection to Core
+    // requires and no emotion reaches the turn at all. Scaling a weak guess down
+    // instead of discarding it is how a companion ends up permanently, slightly
+    // wrong about how everyone feels.
     const weak = await runTurn('nothing is working');
 
     // Intent shaping still applies — that is a separate, confident signal. What

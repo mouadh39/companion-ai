@@ -27,6 +27,8 @@
  * prompt in the one place that must survive every model change.
  */
 
+import type { CapabilityRequirement } from './faculty.js';
+
 /** The values that define the companion. Closed, and ordered by precedence. */
 export type ValueId =
   | 'honesty'
@@ -154,7 +156,9 @@ export type CapabilityDomain =
   | 'planning'
   | 'tools'
   | 'personality'
-  | 'explainability';
+  | 'explainability'
+  /** What it can do with a body, when one is attached. */
+  | 'embodiment';
 
 export const CAPABILITY_DOMAINS = [
   'conversation',
@@ -164,6 +168,7 @@ export const CAPABILITY_DOMAINS = [
   'tools',
   'personality',
   'explainability',
+  'embodiment',
 ] as const satisfies readonly CapabilityDomain[];
 
 /**
@@ -187,8 +192,17 @@ export interface CapabilityStatement {
   readonly domain: CapabilityDomain;
   readonly maturity: CapabilityMaturity;
   readonly summary: string;
-  /** What must be composed in for this to work. Empty when it always works. */
-  readonly requires: readonly string[];
+  /**
+   * What must hold for this to work. Empty when it always works.
+   *
+   * Typed rather than free strings. The list this replaces held values like
+   * `'world_port'` and `'streaming_provider'` that matched no symbol anywhere
+   * and were read by nothing — a catalogue entry could require a faculty that
+   * had never existed and no compiler would notice. Now each requirement names
+   * something real and is resolved against the authority that owns it; see
+   * `@nexa/self`.
+   */
+  readonly requires: readonly CapabilityRequirement[];
 }
 
 /** Why a limitation exists, which decides whether it can ever be lifted. */

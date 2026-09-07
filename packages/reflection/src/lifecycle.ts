@@ -7,7 +7,7 @@ import type {
   Timestamp,
 } from '@nexa/models';
 import { confidence as asConfidence } from '@nexa/models';
-import type { InsightId, UserId } from '@nexa/shared';
+import type { CompanionId, InsightId, UserId } from '@nexa/shared';
 import type { ReflectionConfig } from './config.js';
 import { DEFAULT_CONFIG } from './config.js';
 import { bandFor, decayed, stabilityOf } from './score.js';
@@ -170,9 +170,11 @@ export const materialise = (
   draft: InsightDraft,
   id: InsightId,
   userId: UserId,
+  companionId: CompanionId,
 ): Insight => ({
   id,
   userId,
+  companionId,
   key: draft.key,
   kind: draft.kind,
   topicKey: draft.topicKey,
@@ -273,6 +275,7 @@ export const applyDecisions = (
   insights: readonly Insight[],
   decisions: readonly InsightDecision[],
   userId: UserId,
+  companionId: CompanionId,
   mint: (draft: InsightDraft) => InsightId,
   config: ReflectionConfig = DEFAULT_CONFIG,
 ): readonly Insight[] => {
@@ -282,13 +285,18 @@ export const applyDecisions = (
   for (const decision of decisions) {
     switch (decision.outcome) {
       case 'form': {
-        formed.push(materialise(decision.draft, mint(decision.draft), userId));
+        formed.push(materialise(decision.draft, mint(decision.draft), userId, companionId));
         break;
       }
 
       case 'replace': {
         const superseded = byId.get(decision.targetId);
-        const replacement = materialise(decision.draft, mint(decision.draft), userId);
+        const replacement = materialise(
+          decision.draft,
+          mint(decision.draft),
+          userId,
+          companionId,
+        );
         formed.push(replacement);
         if (superseded !== undefined) {
           byId.set(decision.targetId, {

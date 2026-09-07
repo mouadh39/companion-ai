@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
+import { Pool } from 'pg';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'node:crypto';
 import { trustExternalId, type DeviceId, type UserId } from '@nexa/shared';
 import { ScriptedLanguageModel } from '@nexa/providers';
@@ -1228,4 +1229,105 @@ describe('malformed redeem requests are rejected', () => {
     });
     expect(response.statusCode).toBe(200);
   });
+});
+
+/**
+ * The same genuine-redemption path, but against real Postgres — the Pg
+ * enrolment / pairing-session / device / device-token stores `compose()`
+ * binds when `DATABASE_URL` is set, which no other pairing test exercises.
+ * Real HTTP, real P-256 signatures, real `verifyChallenge`, real atomic
+ * redemption via the partial unique index. Skips with no database, exactly
+ * as `persistence.test.ts` does; scopes every row to a unique user id and
+ * deletes what it created afterwards (FK order: tokens -> enrolments ->
+ * sessions -> devices).
+ */
+const DATABASE_URL = process.env['DATABASE_URL'] ?? '';
+const describeIfDb = DATABASE_URL === '' ? describe.skip : describe;
+
+const pgConfig: AppConfig = { ...config, databaseUrl: DATABASE_URL };
+const PG_USER = `pg-pair-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+
+const pgPool = new Pool({
+  connectionString: DATABASE_URL || 'postgres://unused',
+  ssl: { rejectUnauthorized: false },
+});
+
+afterAll(async () => {
+  if (DATABASE_URL !== '') {
+    await pgPool.query(`delete from device_tokens where user_id = $1`, [PG_USER]);
+    await pgPool.query(
+      `delete from device_enrolments where consumed_by_session_id in
+         (select id from pairing_sessions where user_id = $1)`,
+      [PG_USER],
+    );
+    await pgPool.query(`delete from pairing_sessions where user_id = $1`, [PG_USER]);
+    await pgPool.query(`delete from devices where user_id = $1`, [PG_USER]);
+  }
+  await pgPool.end();
+});
+
+describeIfDb('redemption against real Postgres — the Pg pairing stores end to end', () => {
+  it('enrol -> create session -> redeem with a real signature -> status redeemed, all in Postgres', async () => {
+    const app = compose(pgConfig, { languageModel: new ScriptedLanguageModel(['Sure.']) });
+    const server = buildServer(app, pgConfig);
+    try {
+      const fixture = await livePairingSession(server, PG_USER);
+
+      // Freshly created: the phone's authoritative signal says pending.
+      const pending = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+      expect(pending.statusCode).toBe(200);
+      expect(json<StatusResponseBody>(pending).status).toBe('pending');
+
+      // The headset redeems with a genuine P-256 signature over the challenge.
+      const redemption = await redeem(server, {
+        code: fixture.session.code,
+        signature: fixture.correctSignature().toString('base64'),
+      });
+      expect(redemption.statusCode).toBe(200);
+      const redeemed = json<RedeemResponseBody>(redemption);
+      expect(redeemed.paired).toBe(true);
+      expect(typeof redeemed.deviceId).toBe('string');
+      expect(typeof redeemed.accessToken).toBe('string');
+
+      // The device token authenticates as this account on the device audience.
+      const claims = decodeJwtPayload(redeemed.accessToken);
+      expect(claims.sub).toBe(PG_USER);
+      expect(claims.aud).toBe('nexa-device');
+
+      // The phone polls and now sees redeemed, with the headset's device id —
+      // read straight back out of Postgres by a fresh request.
+      const settled = await statusOf(server, fixture.token, fixture.session.pairingSessionId);
+      expect(settled.statusCode).toBe(200);
+      const body = json<StatusResponseBody>(settled);
+      expect(body.status).toBe('redeemed');
+      expect(body.deviceId).toBe(redeemed.deviceId);
+
+      // The headset is now a real row on this account.
+      const headset = await pgPool.query<{ kind: string; user_id: string }>(
+        `select kind, user_id from devices where id = $1`,
+        [redeemed.deviceId],
+      );
+      expect(headset.rows[0]?.kind).toBe('headset');
+      expect(headset.rows[0]?.user_id).toBe(PG_USER);
+    } finally {
+      await app.shutdown();
+    }
+  }, 30_000);
+
+  it('a handle already consumed cannot be redeemed a second time — enforced by the database', async () => {
+    const app = compose(pgConfig, { languageModel: new ScriptedLanguageModel(['Sure.']) });
+    const server = buildServer(app, pgConfig);
+    try {
+      const fixture = await livePairingSession(server, PG_USER);
+      const sig = fixture.correctSignature().toString('base64');
+
+      const first = await redeem(server, { code: fixture.session.code, signature: sig });
+      expect(first.statusCode).toBe(200);
+
+      const second = await redeem(server, { code: fixture.session.code, signature: sig });
+      expect(second.statusCode).not.toBe(200);
+    } finally {
+      await app.shutdown();
+    }
+  }, 30_000);
 });

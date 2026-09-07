@@ -4,6 +4,7 @@ import { ScriptedLanguageModel } from '@nexa/providers';
 import { compose } from '../dist/composition.js';
 import { buildServer } from '../dist/server.js';
 import type { AppConfig } from '../dist/config.js';
+import { TEST_JWT_SECRET, authHeaders, bindingsFor } from './support/auth.js';
 
 /**
  * End-to-end over the real graph.
@@ -56,10 +57,30 @@ const config: AppConfig = {
   provider: 'scripted',
   modelId: 'scripted',
   anthropicApiKey: null,
+  groqApiKey: null,
+  providerTimeoutMs: 30_000,
+  databaseUrl: null,
+  openAiApiKey: null,
+  embeddingModel: 'text-embedding-3-small',
+  embeddingDimensions: 1536,
+  supabaseJwtSecret: TEST_JWT_SECRET,
+  deviceTokenSecret: null,
 };
+/**
+ * Authenticated, because the API now requires it.
+ *
+ * These suites predate authentication and posted their identifiers in the body.
+ * Rather than bypass the boundary they authenticate through it, with a real
+ * token the production verifier checks — so what they exercise is the same path
+ * a client takes.
+ */
+const AUTH = await authHeaders('user-1');
+const BINDINGS = () => bindingsFor('companion-1' as never, ['user-1' as never]);
+
 
 const harness = (responses: readonly string[] = []) => {
   const app = compose(config, {
+    bindings: BINDINGS(),
     clock: new FixedClock(new Date('2026-07-29T12:00:00.000Z')),
     languageModel: new ScriptedLanguageModel(responses),
   });
@@ -69,6 +90,7 @@ const harness = (responses: readonly string[] = []) => {
 const turn = (text: string) => ({
   method: 'POST' as const,
   url: '/v1/turn',
+  headers: AUTH,
   payload: { companionId: 'companion-1', userId: 'user-1', text },
 });
 
@@ -147,6 +169,7 @@ describe('POST /v1/turn', () => {
     const response = await server.inject({
       method: 'POST',
       url: '/v1/turn',
+      headers: AUTH,
       payload: { companionId: 'companion-1', userId: 'user-1' },
     });
 
@@ -160,6 +183,7 @@ describe('POST /v1/turn', () => {
     const response = await server.inject({
       method: 'POST',
       url: '/v1/turn',
+      headers: AUTH,
       payload: { text: 'hello' },
     });
 

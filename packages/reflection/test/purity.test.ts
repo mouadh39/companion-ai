@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Insight } from '@nexa/models';
 import { applyDecisions, reflect, reviewPass } from '@nexa/reflection';
 import {
+  COMPANION,
   USER,
   at,
   firstFormed,
@@ -93,8 +94,8 @@ describe('purity', () => {
 
 describe('replay', () => {
   it('reconstructs the same store from the same history', () => {
-    const once = applyDecisions([], passAt(60).decisions, USER, mintFrom('ins'));
-    const twice = applyDecisions([], passAt(60).decisions, USER, mintFrom('ins'));
+    const once = applyDecisions([], passAt(60).decisions, USER, COMPANION, mintFrom('ins'));
+    const twice = applyDecisions([], passAt(60).decisions, USER, COMPANION, mintFrom('ins'));
 
     expect(twice).toStrictEqual(once);
   });
@@ -103,7 +104,7 @@ describe('replay', () => {
     // Idempotency, and the property that makes a pass safe to re-run after a
     // crash. Without it an insight's history fills with entries recording that
     // nothing happened.
-    const store = applyDecisions([], passAt(60).decisions, USER, mintFrom('ins'));
+    const store = applyDecisions([], passAt(60).decisions, USER, COMPANION, mintFrom('ins'));
     const again = reflect({ userId: USER, memories: history(), existing: store, at: at(60) });
 
     expect(
@@ -112,8 +113,8 @@ describe('replay', () => {
   });
 
   it('is unaffected by when the replay itself runs', () => {
-    const first = applyDecisions([], passAt(60).decisions, USER, mintFrom('ins'));
-    const rerun = applyDecisions([], passAt(60).decisions, USER, mintFrom('ins'));
+    const first = applyDecisions([], passAt(60).decisions, USER, COMPANION, mintFrom('ins'));
+    const rerun = applyDecisions([], passAt(60).decisions, USER, COMPANION, mintFrom('ins'));
 
     expect(rerun.map((insight) => insight.statement)).toStrictEqual(
       first.map((insight) => insight.statement),
@@ -123,10 +124,10 @@ describe('replay', () => {
   it('reaches the same understanding whether replayed in steps or in one go', () => {
     const stepwise = [20, 40, 60].reduce<readonly Insight[]>(
       (store, day) =>
-        applyDecisions(store, passAt(day, store).decisions, USER, mintFrom(`ins${day}`)),
+        applyDecisions(store, passAt(day, store).decisions, USER, COMPANION, mintFrom(`ins${day}`)),
       [],
     );
-    const wholesale = applyDecisions([], passAt(60).decisions, USER, mintFrom('ins'));
+    const wholesale = applyDecisions([], passAt(60).decisions, USER, COMPANION, mintFrom('ins'));
 
     // The same claims, though not necessarily at the same confidence: an
     // insight formed early and reinforced has a different path behind it than

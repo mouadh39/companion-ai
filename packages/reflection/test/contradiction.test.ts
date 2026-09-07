@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyDecisions, reflect } from '@nexa/reflection';
 import type { Insight, InsightDecision } from '@nexa/models';
-import { USER, at, firstFormed, insightFrom, memoryOf, mintFrom, only } from './fixtures.js';
+import { COMPANION, USER, at, firstFormed, insightFrom, memoryOf, mintFrom, only } from './fixtures.js';
 
 /** Three remarks that found "the user may enjoy chess". */
 const likesChess = () => [
@@ -138,7 +138,7 @@ describe('a claim is replaced only when it has genuinely turned over', () => {
       at: at(50),
     });
 
-    const store = applyDecisions([held], result.decisions, USER, mintFrom('ins'));
+    const store = applyDecisions([held], result.decisions, USER, COMPANION, mintFrom('ins'));
     const old = store.find((insight) => insight.id === held.id);
     const replacement = store.find((insight) => insight.id !== held.id);
 

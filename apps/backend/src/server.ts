@@ -115,6 +115,20 @@ interface RefreshDeviceTokenBody {
 }
 
 /**
+ * What onboarding may say it just collected.
+ *
+ * All three optional, on the same field: a caller sends only the one step it
+ * just finished, and the two it does not mention are left exactly as they
+ * were — see `ProfileStore.upsert`. There is no `completed` field here; that
+ * is computed from the three below, never asserted by a caller.
+ */
+interface ProfileUpdateBody {
+  readonly firstName?: unknown;
+  readonly username?: unknown;
+  readonly dateOfBirth?: unknown;
+}
+
+/**
  * A crude, bounded guard against hammering the one route on this server that
  * asks for no credential.
  *
@@ -163,6 +177,63 @@ interface TurnBody {
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
+
+/** A first name is only ever judged on length — no format Nexa has any
+ * business enforcing on what someone is called. */
+const isValidFirstName = (value: string): boolean => value.length >= 1 && value.length <= 50;
+
+/** Mirrors `profiles_username_shape_check` in the migration exactly: 3-20
+ * characters, starts with a letter, the rest letters/digits/underscore.
+ * Kept as one literal pattern in both places rather than generated from a
+ * shared constant — the two are independent defences, and a mismatch
+ * between them is far more likely to be caught by a test failing here than
+ * by the database silently accepting what this rejects. */
+const USERNAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]{2,19}$/;
+const isValidUsername = (value: string): boolean => USERNAME_PATTERN.test(value);
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MINIMUM_AGE_YEARS = 13;
+
+type DateOfBirthResult =
+  | { readonly ok: true; readonly value: string }
+  | { readonly ok: false; readonly reason: 'invalid_format' | 'in_future' | 'too_young' };
+
+/**
+ * Validates a date of birth against the one rule this product actually
+ * enforces — the account must be at least {@link MINIMUM_AGE_YEARS} — and
+ * against nothing else invented along the way. `nowMs` is a parameter
+ * rather than `Date.now()` so this is exercised deterministically, exactly
+ * as the rest of this codebase treats "now" — see `Clock`.
+ *
+ * Rejects a string that is not a real calendar date (not just one that does
+ * not parse — `2023-02-30` parses in JavaScript by rolling over to March 2,
+ * which this catches by round-tripping through ISO and comparing).
+ */
+const parseDateOfBirth = (value: unknown, nowMs: number): DateOfBirthResult => {
+  if (typeof value !== 'string' || !DATE_ONLY_PATTERN.test(value)) {
+    return { ok: false, reason: 'invalid_format' };
+  }
+
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    return { ok: false, reason: 'invalid_format' };
+  }
+
+  if (parsed.getTime() > nowMs) {
+    return { ok: false, reason: 'in_future' };
+  }
+
+  const cutoff = Date.UTC(
+    parsed.getUTCFullYear() + MINIMUM_AGE_YEARS,
+    parsed.getUTCMonth(),
+    parsed.getUTCDate(),
+  );
+  if (cutoff > nowMs) {
+    return { ok: false, reason: 'too_young' };
+  }
+
+  return { ok: true, value };
+};
 
 const isActionType = (value: unknown): value is ActionType =>
   typeof value === 'string' && (ACTION_TYPES as readonly string[]).includes(value);
@@ -395,6 +466,126 @@ export const buildServer = (app: Application, config: AppConfig): FastifyInstanc
       kind: device.kind,
       label: device.label,
       registeredAt: device.registeredAt.toISOString(),
+    });
+  });
+
+  /**
+   * An authenticated account's onboarding progress.
+   *
+   * Never a 404 for "onboarding not started yet" — an account with no row is
+   * exactly as valid a thing to ask about as one mid-onboarding or done, and
+   * the three states are told apart by the fields in the same 200, not by
+   * the status code. `completed` is the one field a caller should actually
+   * branch routing on; the others exist so onboarding can resume at the
+   * right step rather than restart it.
+   */
+  server.get('/v1/profile', async (request, reply) => {
+    const authentication = await authenticate(app, request);
+    if (!authentication.ok) {
+      return reply
+        .code(authentication.status)
+        .send({ error: authentication.error, message: authentication.message });
+    }
+
+    const profile = await app.profiles.find(authentication.identity.userId);
+    return reply.code(200).send({
+      firstName: profile?.firstName ?? null,
+      username: profile?.username ?? null,
+      dateOfBirth: profile?.dateOfBirth ?? null,
+      completed: profile !== null && profile.completedAt !== null,
+    });
+  });
+
+  /**
+   * Onboarding submits whichever step it just collected.
+   *
+   * ## What is validated, and where
+   *
+   * Every field present in the body is validated here before
+   * `app.profiles.upsert` ever sees it — shape, and for a date of birth, the
+   * one age policy this product enforces. The store's own migration repeats
+   * the username shape check and enforces uniqueness at the database level;
+   * neither defence stands in for the other, since a client must never be
+   * trusted to have validated its own request honestly.
+   *
+   * ## What is never trusted
+   *
+   * The account is the verified token's subject, exactly as every other
+   * route here. There is no field a caller could send to write this, or any
+   * other account's, profile.
+   */
+  server.patch('/v1/profile', async (request, reply) => {
+    const authentication = await authenticate(app, request);
+    if (!authentication.ok) {
+      return reply
+        .code(authentication.status)
+        .send({ error: authentication.error, message: authentication.message });
+    }
+
+    const body = request.body as ProfileUpdateBody | undefined;
+    const update: { firstName?: string; username?: string; dateOfBirth?: string } = {};
+
+    if (body?.firstName !== undefined) {
+      const trimmed = typeof body.firstName === 'string' ? body.firstName.trim() : '';
+      if (!isValidFirstName(trimmed)) {
+        return reply.code(400).send({
+          error: 'invalid_request',
+          message: 'Enter a first name, up to 50 characters.',
+        });
+      }
+      update.firstName = trimmed;
+    }
+
+    if (body?.username !== undefined) {
+      const trimmed = typeof body.username === 'string' ? body.username.trim() : '';
+      if (!isValidUsername(trimmed)) {
+        return reply.code(400).send({
+          error: 'invalid_request',
+          message:
+            'Usernames are 3-20 characters, start with a letter, and use only letters, numbers, and underscores.',
+        });
+      }
+      update.username = trimmed;
+    }
+
+    if (body?.dateOfBirth !== undefined) {
+      const parsed = parseDateOfBirth(body.dateOfBirth, app.clock.now());
+      if (!parsed.ok) {
+        const message =
+          parsed.reason === 'too_young'
+            ? 'You need to be at least 13 to use Nexa.'
+            : parsed.reason === 'in_future'
+              ? "That date hasn't happened yet."
+              : 'Enter a valid date of birth.';
+        return reply.code(400).send({ error: 'invalid_request', message });
+      }
+      update.dateOfBirth = parsed.value;
+    }
+
+    if (Object.keys(update).length === 0) {
+      return reply.code(400).send({
+        error: 'invalid_request',
+        message: 'Nothing to update.',
+      });
+    }
+
+    const result = await app.profiles.upsert(authentication.identity.userId, update);
+    if (!result.ok) {
+      // Not 400: the request was well-formed, and the same username sent
+      // again by the same account would succeed — this is a conflict with
+      // someone else's row, not a malformed one of the caller's own.
+      return reply.code(409).send({
+        error: 'username_taken',
+        message: 'That username is already taken.',
+      });
+    }
+
+    const { profile } = result;
+    return reply.code(200).send({
+      firstName: profile.firstName,
+      username: profile.username,
+      dateOfBirth: profile.dateOfBirth,
+      completed: profile.completedAt !== null,
     });
   });
 

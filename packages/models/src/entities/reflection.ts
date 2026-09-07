@@ -1,4 +1,4 @@
-import type { InsightId, MemoryId, UserId } from '@nexa/shared';
+import type { CompanionId, InsightId, MemoryId, UserId } from '@nexa/shared';
 import type { MemorySource } from '../enums/memory.js';
 import type { ConfidenceScore } from '../value-objects/score.js';
 import type { Timestamp } from '../value-objects/timestamp.js';
@@ -247,6 +247,8 @@ export interface InsightChange {
 export interface Insight {
   readonly id: InsightId;
   readonly userId: UserId;
+  /** Which companion formed it. The other half of the ownership boundary. */
+  readonly companionId: CompanionId;
   /** `kind:topicKey`. Unique among this user's active insights. */
   readonly key: InsightKey;
   readonly kind: InsightKind;

@@ -34,6 +34,7 @@ export const memoryOf = (
   return {
     id: `mem-${content.slice(0, 8)}` as Memory['id'],
     userId: 'user-1' as Memory['userId'],
+    companionId: 'companion-1' as Memory['companionId'],
     type: policy.defaultType,
     subject,
     content,

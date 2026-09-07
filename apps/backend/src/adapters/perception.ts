@@ -1,133 +1,60 @@
-import type { PerceptionPort } from '@nexa/core';
-import type {
-  EmotionSignal,
-  IntentCandidate,
-  IntentKind,
-  Perception,
-  UserEmotion,
-} from '@nexa/models';
-import { confidence } from '@nexa/models';
+import type { Clock } from '@nexa/shared';
+import type { Perception, TextPercept } from '@nexa/models';
+import { timestamp } from '@nexa/models';
+import type { PerceptionPort, PortOptions } from '@nexa/core';
+import { perceive, toPerception } from '@nexa/perception';
+import type { TurnScratchpad } from './scratchpad.js';
 
 /**
- * Rule-based perception.
+ * Perception, behind the port Core declares.
  *
- * Deliberately not a model call. Perception runs on the critical path of every
- * turn, and a provider round trip here would pay the provider's latency twice
- * — once to understand the message and once to answer it.
+ * Replaces `HeuristicPerception`, which held its own keyword tables in this file
+ * and reported every emotional read at a confidence just below the actionable
+ * floor. Those tables were a second, untested perception engine living in the
+ * composition root; this delegates to the real one.
  *
- * The rules below are shallow on purpose. They exist so the pipeline has a real
- * `Perception` to reason about while the seam stays honest; replacing them with
- * a classifier is an implementation change behind `PerceptionPort` and nothing
- * else moves.
+ * ## Two shapes, and both are needed
+ *
+ * `perceive()` produces a `PerceptionOutcome` — twenty-nine dimensions, stances,
+ * tensions, per-channel readings. Core's `PerceptionPort` returns a `Perception`
+ * — text, ranked intents, one emotion, entities. This returns the projection and
+ * records the full outcome on the scratchpad, because retrieval and planning
+ * both need the richer one and neither of their ports carries it.
+ *
+ * Widening those ports would make Core aware of a capability package's
+ * vocabulary. Projecting and sharing leaves Core exactly as Phase A froze it.
+ *
+ * ## What the port shape costs, stated rather than worked around
+ *
+ * `perceive(text, options)` carries the message and the turn id, and nothing
+ * else — no `companionId`, so no way to load the conversation. `topic_shift` is
+ * therefore unreachable through this wiring and is reported as `unknown` rather
+ * than as absent, which is the honest outcome and exactly the distinction
+ * perception's `UnknownDimension` exists to draw. Widening `PerceptionPort` is a
+ * Core contract change; it is recorded as remaining work.
  */
+export class PerceptionEngine implements PerceptionPort {
+  readonly #clock: Clock;
+  readonly #scratchpad: TurnScratchpad;
 
-const QUESTION_MARKERS = [
-  'what', 'why', 'how', 'when', 'where', 'who', 'which',
-  'can you', 'could you', 'do you', 'is it', 'are you',
-];
-
-const REQUEST_MARKERS = [
-  'please', 'help me', 'i need', 'can you make', 'build', 'write', 'create', 'fix', 'show me',
-];
-
-const PLANNING_MARKERS = [
-  'plan', 'schedule', 'tomorrow', 'next week', 'deadline', 'goal', 'roadmap', 'milestone',
-];
-
-const CORRECTION_MARKERS = [
-  "that's wrong", 'thats wrong', 'no,', 'actually,', "isn't right", 'incorrect', 'not true',
-];
-
-const CASUAL_MARKERS = ['hey', 'hi', 'hello', 'good morning', 'good night', 'thanks', 'thank you'];
-
-const EMOTION_MARKERS: ReadonlyArray<readonly [UserEmotion, readonly string[]]> = [
-  ['frustrated', ['frustrated', 'annoying', 'stuck', 'ugh', 'not working', 'broken']],
-  ['stressed', ['stressed', 'overwhelmed', 'too much', 'deadline', 'panic']],
-  ['sad', ['sad', 'down', 'lonely', 'miss ']],
-  ['excited', ['excited', 'amazing', "can't wait", 'awesome']],
-  ['happy', ['happy', 'great', 'glad', 'love it']],
-  ['proud', ['proud', 'finally', 'i did it', 'it works']],
-  ['tired', ['tired', 'exhausted', 'sleepy', 'long day']],
-  ['confused', ['confused', "don't understand", 'unclear', 'lost']],
-];
-
-const includesAny = (haystack: string, needles: readonly string[]): boolean =>
-  needles.some((needle) => haystack.includes(needle));
-
-export class HeuristicPerception implements PerceptionPort {
-  async perceive(text: string): Promise<Perception> {
-    const normalised = text.trim().replace(/\s+/g, ' ');
-    const lower = normalised.toLowerCase();
-
-    const intents: IntentCandidate[] = [];
-
-    if (lower.endsWith('?') || includesAny(lower, QUESTION_MARKERS)) {
-      intents.push({ kind: 'question', confidence: confidence(lower.endsWith('?') ? 0.9 : 0.6) });
-    }
-    if (includesAny(lower, CORRECTION_MARKERS)) {
-      intents.push({ kind: 'correction', confidence: confidence(0.75) });
-    }
-    if (includesAny(lower, REQUEST_MARKERS)) {
-      intents.push({ kind: 'request', confidence: confidence(0.7) });
-    }
-    if (includesAny(lower, PLANNING_MARKERS)) {
-      intents.push({ kind: 'planning', confidence: confidence(0.65) });
-    }
-    if (includesAny(lower, CASUAL_MARKERS) && normalised.length < 40) {
-      intents.push({ kind: 'casual', confidence: confidence(0.7) });
-    }
-
-    const emotion = this.#detectEmotion(lower);
-    if (emotion !== null && (emotion.emotion === 'sad' || emotion.emotion === 'stressed')) {
-      intents.push({ kind: 'emotional_support', confidence: confidence(0.6) });
-    }
-
-    if (intents.length === 0 && normalised.length > 0) {
-      intents.push({ kind: 'statement', confidence: confidence(0.5) });
-    }
-
-    intents.sort((a, b) => b.confidence - a.confidence);
-
-    return {
-      text: normalised,
-      intents,
-      emotion,
-      entities: this.#extractEntities(normalised),
-    };
+  constructor(deps: { readonly clock: Clock; readonly scratchpad: TurnScratchpad }) {
+    this.#clock = deps.clock;
+    this.#scratchpad = deps.scratchpad;
   }
 
-  #detectEmotion(lower: string): EmotionSignal | null {
-    for (const [emotion, markers] of EMOTION_MARKERS) {
-      if (includesAny(lower, markers)) {
-        // Confidence is capped low on purpose. These are keyword matches, and
-        // overstating certainty here would let a single word convince the
-        // companion that someone is upset when they are not.
-        return { emotion, intensity: confidence(0.6), confidence: confidence(0.55) };
-      }
-    }
-    return null;
-  }
+  async perceive(text: string, options: PortOptions): Promise<Perception> {
+    // The turn's one clock read for perception. Every engine downstream is given
+    // this instant rather than taking its own, which is what makes a replayed
+    // turn produce the same readings rather than merely similar ones.
+    const at = timestamp(this.#clock.nowIso());
+    const percept: TextPercept = { channel: 'text', at, text };
 
-  /** Capitalised words and quoted spans — a placeholder for real NER. */
-  #extractEntities(text: string): readonly string[] {
-    const entities = new Set<string>();
+    const outcome = perceive({ percepts: [percept], at });
 
-    for (const match of text.matchAll(/\b[A-Z][a-zA-Z0-9_.-]{2,}\b/g)) {
-      const value = match[0];
-      if (value !== undefined) entities.add(value);
-    }
-    for (const match of text.matchAll(/"([^"]{2,60})"/g)) {
-      const value = match[1];
-      if (value !== undefined) entities.add(value);
-    }
+    // Opened here because perception is the first stage of the turn and the only
+    // one guaranteed to run. Everything downstream reads what this wrote.
+    this.#scratchpad.open(options.turnId, { at, message: text, perception: outcome });
 
-    return [...entities].slice(0, 10);
+    return toPerception(outcome, [percept]);
   }
 }
-
-const isIntent = (value: string): value is IntentKind =>
-  ['question', 'request', 'statement', 'planning', 'emotional_support', 'casual', 'correction', 'unknown'].includes(
-    value,
-  );
-
-export { isIntent };
