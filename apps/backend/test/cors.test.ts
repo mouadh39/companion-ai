@@ -204,3 +204,89 @@ describe('CORS over the real HTTP surface', () => {
     expect(response.headers['access-control-allow-origin']).toBeUndefined();
   });
 });
+
+/**
+ * The exact production failure, reproduced.
+ *
+ * Railway config is `NEXA_CORS_ORIGINS=http://localhost:*` and Flutter Web runs
+ * from `http://localhost:<dynamic-port>`. The browser sends this preflight
+ * before `GET`/`PATCH /v1/profile`:
+ *
+ *   OPTIONS /v1/profile
+ *   Origin: http://localhost:<port>
+ *   Access-Control-Request-Method: GET
+ *   Access-Control-Request-Headers: authorization,content-type
+ *
+ * It must be answered — 2xx, the requesting origin reflected, GET among the
+ * allowed methods, authorization + content-type among the allowed headers —
+ * without the route handler or `authenticate()` ever running.
+ */
+describe('production preflight — NEXA_CORS_ORIGINS=http://localhost:* only', () => {
+  const PORTS = [60736, 1, 5173, 65535];
+
+  for (const port of PORTS) {
+    it(`OPTIONS /v1/profile from http://localhost:${port} succeeds with the right headers`, async () => {
+      const server = serverWith(['http://localhost:*']);
+      const origin = `http://localhost:${port}`;
+
+      const response = await server.inject({
+        method: 'OPTIONS',
+        url: '/v1/profile',
+        headers: {
+          origin,
+          'access-control-request-method': 'GET',
+          'access-control-request-headers': 'authorization,content-type',
+        },
+      });
+
+      expect(response.statusCode).toBeGreaterThanOrEqual(200);
+      expect(response.statusCode).toBeLessThan(300); // not the 404 production returns
+      expect(response.headers['access-control-allow-origin']).toBe(origin);
+
+      const methods = String(response.headers['access-control-allow-methods']);
+      expect(methods).toContain('GET');
+
+      const allowedHeaders = String(response.headers['access-control-allow-headers']).toLowerCase();
+      expect(allowedHeaders).toContain('authorization');
+      expect(allowedHeaders).toContain('content-type');
+    });
+  }
+
+  it('the same preflight does not reach authentication (no 401 / 503)', async () => {
+    const server = serverWith(['http://localhost:*']);
+
+    const response = await server.inject({
+      method: 'OPTIONS',
+      url: '/v1/profile',
+      headers: {
+        origin: 'http://localhost:60736',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization,content-type',
+      },
+    });
+
+    expect(response.statusCode).not.toBe(401);
+    expect(response.statusCode).not.toBe(503);
+  });
+
+  it('the real GET /v1/profile after the preflight still authenticates, unchanged', async () => {
+    const server = serverWith(['http://localhost:*']);
+    const origin = 'http://localhost:60736';
+
+    const anonymous = await server.inject({
+      method: 'GET',
+      url: '/v1/profile',
+      headers: { origin },
+    });
+    expect(anonymous.statusCode).toBe(401); // auth still enforced
+    expect(anonymous.headers['access-control-allow-origin']).toBe(origin);
+
+    const authed = await server.inject({
+      method: 'GET',
+      url: '/v1/profile',
+      headers: { ...(await authHeaders('cors-localhost-user')), origin },
+    });
+    expect(authed.statusCode).toBe(200);
+    expect(authed.headers['access-control-allow-origin']).toBe(origin);
+  });
+});
